@@ -11,9 +11,14 @@ from itertools import permutations as perm
 from functools import cached_property, lru_cache
 
 from contextlib import contextmanager
-from typing import Any
 
-from z3 import *
+from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver
+from pysmt.typing import *
+
+
+# from typing import Any
+
+# from z3 import *
 
 
 # def_ctx = Int('dummy').ctx
@@ -22,7 +27,8 @@ def _collect_vars(expr):
     res = set()
 
     def collect(expr):
-        if len(expr.children()) == 0 and expr.decl().kind() == Z3_OP_UNINTERPRETED:
+        # if len(expr.children()) == 0 and expr.decl().kind() == Z3_OP_UNINTERPRETED:
+        if len(expr.symbols() == 0) and expr.decl().kind() == 0:  # TODO This is obv wrong, but I need to debug it
             res.add(expr)
         else:
             for c in expr.children():
@@ -33,8 +39,8 @@ def _collect_vars(expr):
 
 
 class Spec:
-    def __init__(self, name: str, phis: list[ExprRef], outputs: list[ExprRef], \
-                 inputs: list[ExprRef], preconds: list[BoolRef] = None):
+    def __init__(self, name: str, phis, outputs,
+                 inputs, preconds: list[BOOL] = None):  # TODO Check z3 code
         """
         Create a specification.
 
@@ -73,7 +79,7 @@ class Spec:
         self.inputs = inputs
         self.outputs = outputs
         self.phis = phis
-        self.preconds = preconds if preconds else [BoolVal(True, ctx=self.ctx) for _ in outputs]
+        self.preconds = preconds if preconds else [TRUE() for _ in outputs]
         self.vars = set().union(*[_collect_vars(phi) for phi in phis])
         all_vars = outputs + inputs
         assert len(set(all_vars)) == len(all_vars), 'outputs and inputs must be unique'
@@ -105,28 +111,32 @@ class Spec:
 
     @cached_property
     def is_total(self):
-        ctx = Context()
-        solver = Solver(ctx=ctx)
-        spec = self.translate(ctx)
+        #ctx = Context()
+        solver = Solver()
+        spec = self.inputs
         solver.add(Or([Not(p) for p in spec.preconds]))
-        return solver.check() == unsat
+        return solver.check() == False # unsatisfiable
 
     @cached_property
     def is_deterministic(self):
-        ctx = Context()
-        solver = Solver(ctx=ctx)
-        spec = self.translate(ctx)
-        ins = [FreshConst(ty) for ty in spec.in_types]
-        outs = [FreshConst(ty) for ty in spec.out_types]
+        # ctx = Context()
+        solver = Solver()
+        spec = self.inputs # Probably wrong
+        ins = []
+        for ty in self.inputs:
+            ins.append(INT(ty))
+        outs = []
+        for ty in self.outputs:
+            outs.append(INT(ty))
         _, phis = spec.instantiate(outs, ins)
         solver.add(And([p for p in spec.preconds]))
         for p in spec.phis:
             solver.add(p)
         for p in phis:
             solver.add(p)
-        solver.add(And([a == b for a, b in zip(spec.inputs, ins)]))
-        solver.add(Or([a != b for a, b in zip(spec.outputs, outs)]))
-        return solver.check() == unsat
+        solver.add(And([a == b for a, b in zip(self.inputs, ins)]))
+        solver.add(Or([a != b for a, b in zip(self.outputs, outs)]))
+        return solver.check() == False # unsat
 
     def instantiate(self, outs, ins):
         self_outs = self.outputs
@@ -134,13 +144,18 @@ class Spec:
         assert len(outs) == len(self_outs)
         assert len(ins) == len(self_ins)
         assert all(x.ctx == y.ctx for x, y in zip(self_outs + self_ins, outs + ins))
-        phis = [substitute(phi, list(zip(self_outs + self_ins, outs + ins))) for phi in self.phis]
-        pres = [substitute(p, list(zip(self_ins, ins))) for p in self.preconds]
+        # [substitute(phi, list(zip(self_outs + self_ins, outs + ins))) for phi in self.phis]
+        phis = []
+        for phi in self.phis:
+            phis.append(phi.substitue(list(zip(self_outs + self_ins, outs + ins))))
+        pres = []
+        for p in self.preconds:
+            pres.append(p.substitute(list(zip(self_ins, ins))))
         return pres, phis
 
 
 class Func(Spec):
-    def __init__(self, name, phi, precond=BoolVal(True), inputs=[]):
+    def __init__(self, name, phi, precond=Bool(True), inputs=[]):
         """Creates an Op from a Z3 expression.
 
         Attributes:
@@ -183,17 +198,17 @@ class Func(Spec):
         # if the operator inputs have different sorts, it cannot be commutative
         if len(set(v.sort() for v in self.inputs)) > 1:
             return False
-        ctx = Context()
-        precond = self.precond.translate(ctx)
-        func = self.func.translate(ctx)
-        ins = [x.translate(ctx) for x in self.inputs]
-        subst = lambda f, i: substitute(f, list(zip(ins, i)))
+        # ctx = Context()
+        precond = self.precond
+        func = self.func
+        ins = self.inputs
+        subst = lambda f, i: f.substitute(list(zip(ins, i)))
         fs = [And([subst(precond, a), subst(precond, b), \
-                   subst(func, a) != subst(func, b)], ctx) \
+                   subst(func, a) != subst(func, b)]) \
               for a, b in comb(perm(ins), 2)]
-        s = Solver(ctx=ctx)
+        s = Solver()
         s.add(Or(fs, ctx))
-        return s.check() == unsat
+        return s.check() == False # unsat
 
 
 class Prg:
@@ -302,7 +317,7 @@ class BitVecEnum(EnumBase):
         return self.cons_to_item[val.as_long()]
 
     def add_range_constr(self, solver, var):
-        solver.add(ULE(var, len(self.item_to_cons) - 1))
+        solver.add(LE(var, len(self.item_to_cons) - 1))  # Should be unsigned
 
 
 @contextmanager
@@ -318,10 +333,9 @@ def _eval_model(solver, vars):
 
 
 class SpecWithSolver:
-    def __init__(self, spec: Spec, ops: list[Func], ctx: Context):
-        self.ctx = ctx
-        self.spec = spec = spec.translate(ctx)
-        self.ops = ops = [op.translate(ctx) for op in ops]
+    def __init__(self, spec: Spec, ops: list[Func]):
+        self.spec = spec
+        self.ops = ops = [op for op in ops]
 
         # prepare operator enum sort
         self.op_enum = EnumSortEnum('Operators', ops, ctx)
@@ -831,7 +845,7 @@ def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
 
 
 class Bl:
-    w, x, y, z = Bools('w x y z')
+    w, x, y, z = Symbol('w'), Symbol('x'), Symbol('y'), Symbol('z')
     i2 = [x, y]
     i3 = i2 + [z]
     i4 = [w] + i3
@@ -1013,7 +1027,7 @@ class TestBase:
 class Tests(TestBase):
     def random_test(self, name, n_vars, create_formula):
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
-        spec = Func('rand', create_formula([Bool(f'x{i}') for i in range(n_vars)]))
+        spec = Func('rand', create_formula([Symbol(f'x{i}') for i in range(n_vars)]))
         return self.do_synth(name, spec, ops, max_const=0, theory='QF_FD')
 
     def test_rand(self, size=40, n_vars=4):
@@ -1167,7 +1181,8 @@ def parse_standard_args():
 
 
 # Enable Z3 parallel mode
-set_param("parallel.enable", True)
+# set_param("parallel.enable", True)
+# TODO Check for parallel mode in pysmt
 
 if __name__ == "__main__":
     args = parse_standard_args()
