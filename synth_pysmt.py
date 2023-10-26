@@ -12,7 +12,8 @@ from functools import cached_property, lru_cache
 
 from contextlib import contextmanager
 
-from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver
+from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver, is_sat, Implies, Div, BVURem, BVUDiv, \
+    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt
 from pysmt.typing import *
 
 
@@ -174,10 +175,10 @@ class Func(Spec):
         assert _collect_vars(precond) <= input_vars, \
             'precondition uses variables that are not in phi'
         # create Z3 variable of a given sort
-        res_ty = phi.sort()
+        res_ty = PySMTType(phi) # phi.sort
         self.precond = precond
         self.func = phi
-        out = FreshConst(res_ty)
+        out = Symbol(res_ty, INT)
         super().__init__(name, [out == phi], [out], inputs, preconds=[precond])
 
     @cached_property
@@ -207,7 +208,7 @@ class Func(Spec):
                    subst(func, a) != subst(func, b)]) \
               for a, b in comb(perm(ins), 2)]
         s = Solver()
-        s.add(Or(fs, ctx))
+        s.add(Or(fs)) # missing context
         return s.check() == False # unsat
 
 
@@ -294,7 +295,7 @@ class EnumBase:
 
 class EnumSortEnum(EnumBase):
     def __init__(self, name, items, ctx):
-        self.sort, cons = EnumSort(name, [str(i) for i in items], ctx=ctx)
+        self.sort, cons = PySMTType([str(i) for i in items], name)
         super().__init__(items, cons)
 
     def get_from_model_val(self, val):
@@ -305,7 +306,7 @@ class EnumSortEnum(EnumBase):
 
 
 def _bv_sort(n, ctx):
-    return BitVecSort(len(bin(n)) - 2, ctx=ctx)
+    return PySMTType(len(bin(n)) - 2) # bv sort
 
 
 class BitVecEnum(EnumBase):
@@ -333,20 +334,20 @@ def _eval_model(solver, vars):
 
 
 class SpecWithSolver:
-    def __init__(self, spec: Spec, ops: list[Func]):
+    def __init__(self, spec: Spec, ops: list[Func], logic):
         self.spec = spec
         self.ops = ops = [op for op in ops]
 
         # prepare operator enum sort
-        self.op_enum = EnumSortEnum('Operators', ops, ctx)
+        self.op_enum = EnumSortEnum('Operators', ops)
 
         # create map of types to their id
         types = set(ty for op in ops for ty in op.out_types + op.in_types)
-        self.ty_enum = EnumSortEnum('Types', types, ctx)
+        self.ty_enum = EnumSortEnum('Types', types)
 
         # prepare verification solver
-        self.verif = Solver(ctx=ctx)
-        self.eval = Solver(ctx=ctx)
+        self.verif = Solver(logic=logic)
+        self.eval = Solver(logic=logic)
         self.inputs = spec.inputs
         self.outputs = spec.outputs
 
@@ -361,7 +362,7 @@ class SpecWithSolver:
         for var, val in zip(self.inputs, input_vals):
             s.add(var == val)
         res = s.check()
-        assert res == sat
+        assert is_sat(res)
         res = _eval_model(s, self.outputs)
         s.pop()
         return res
@@ -378,7 +379,7 @@ class SpecWithSolver:
         s.push()
         for i in range(n):
             c = s.check()
-            if c == unsat:
+            if is_sat(c):
                 assert len(res) > 0, 'must have sampled the spec at least once'
                 break
             m = s.model()
@@ -445,7 +446,7 @@ class SpecWithSolver:
         ty_sort = self.ty_enum.sort
         op_sort = self.op_enum.sort
         ln_sort = _bv_sort(length, ctx)
-        bl_sort = BoolSort(ctx=ctx)
+        #bl_sort = BoolSort(ctx=ctx)
 
         # get the verification solver and its input and output variables
         eval_ins = self.inputs
@@ -454,8 +455,8 @@ class SpecWithSolver:
 
         @lru_cache
         def get_var(ty, name):
-            assert ty.ctx == ctx
-            return Const(name, ty)
+            # assert ty.ctx == ctx
+            return Symbol(name, ty)
 
         @lru_cache
         def ty_name(ty):
@@ -508,7 +509,7 @@ class SpecWithSolver:
             # i.e.: we can only use results of preceding instructions
             for insn in range(length):
                 for v in var_insn_opnds(insn):
-                    solver.add(ULE(v, insn - 1))
+                    solver.add(LE(v, insn - 1))
 
             # pin operands of an instruction that are not used (because of arity)
             # to the last input of that instruction
@@ -525,8 +526,8 @@ class SpecWithSolver:
             # to synthesize constant outputs correctly.
             max_const_ran = range(n_inputs, length - 1)
             if not max_const is None and len(max_const_ran) > 0:
-                solver.add(AtMost(*[v for insn in max_const_ran \
-                                    for v in var_insn_opnds_is_const(insn)], max_const))
+                solver.add(LE(*[v for insn in max_const_ran \
+                                    for v in var_insn_opnds_is_const(insn)], max_const)) # AtMost replace by LE
 
             # if we have at most one type, we don't need type constraints
             if len(self.ty_enum) <= 1:
@@ -569,7 +570,7 @@ class SpecWithSolver:
             def opnd_set(insn):
                 ext = length - ln_sort.size()
                 assert ext >= 0
-                res = BitVecVal(0, length, ctx=ctx)
+                res = Bv(0, length)
                 one = BitVecVal(1, length, ctx=ctx)
                 for opnd in var_insn_opnds(insn):
                     res |= one << ZeroExt(ext, opnd)
@@ -877,11 +878,12 @@ class Bv:
         self.width = width
         self.ty = BitVecSort(width)
 
-        x, y = BitVecs('x y', width)
+        x = Symbol('x', BVType())
+        y = Symbol('y', BVType())
         shift_precond = And([y >= 0, y < width])
         div_precond = y != 0
-        z = BitVecVal(0, width)
-        o = BitVecVal(1, width)
+        z = BV(0, width)
+        o = BV(1, width)
 
         l = [
             Func('neg', -x),
@@ -893,17 +895,17 @@ class Bv:
             Func('sub', x - y),
             Func('mul', x * y),
             Func('div', x / y),
-            Func('udiv', UDiv(x, y), precond=div_precond),
+            Func('udiv', BVUDiv(x, y), precond=div_precond),
             Func('smod', x % y, precond=div_precond),
-            Func('urem', URem(x, y), precond=div_precond),
-            Func('srem', SRem(x, y), precond=div_precond),
+            Func('urem', BVURem(x, y), precond=div_precond),
+            Func('srem', BVSRem(x, y), precond=div_precond),
             Func('shl', (x << y), precond=shift_precond),
-            Func('lshr', LShR(x, y), precond=shift_precond),
+            Func('lshr', BVLShr(x, y), precond=shift_precond),
             Func('ashr', x >> y, precond=shift_precond),
-            Func('uge', If(UGE(x, y), o, z)),
-            Func('ult', If(ULT(x, y), o, z)),
-            Func('sge', If(x >= y, o, z)),
-            Func('slt', If(x < y, o, z)),
+            Func('uge', Ite(BVUGE(x, y), o, z)),
+            Func('ult', Ite(BVULT(x, y), o, z)),
+            Func('sge', Ite(x >= y, o, z)),
+            Func('slt', Ite(x < y, o, z)),
         ]
 
         for op in l:
@@ -1062,7 +1064,11 @@ class Tests(TestBase):
         return self.do_synth('zero', spec, ops, max_const=0, theory='QF_FD')
 
     def test_add(self):
-        x, y, ci, s, co = Bools('x y ci s co')
+        x = Symbol('x', INT)
+        y = Symbol('y', INT)
+        ci = Symbol('ci', INT)
+        s = Symbol('s', INT)
+        co = Symbol('co', INT)
         add = [co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
@@ -1070,7 +1076,11 @@ class Tests(TestBase):
                              theory='QF_FD')
 
     def test_add_apollo(self):
-        x, y, ci, s, co = Bools('x y ci s co')
+        x = Symbol('x')
+        y = Symbol('y')
+        s = Symbol('ci')
+        ci = Symbol('s')
+        co = Symbol('co')
         add = [co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, [Bl.nor3], \
@@ -1082,56 +1092,63 @@ class Tests(TestBase):
         return self.do_synth('identity', spec, ops)
 
     def test_true(self):
-        x, y, z = Bools('x y z')
+        x = Symbol('x')
+        y = Symbol('y')
+        z = Symbol('z')
         spec = Func('magic', Or(Or(x, y, z), Not(x)))
         ops = [Bl.nand2, Bl.nor2, Bl.and2, Bl.or2, Bl.xor2]
         return self.do_synth('true', spec, ops, desc='constant true')
 
     def test_false(self):
-        x, y, z = Bools('x y z')
+        x = Symbol('x')
+        y = Symbol('y')
+        z = Symbol('z')
         spec = Spec('magic', [z == Or([])], [z], [x])
         ops = [Bl.nand2, Bl.nor2, Bl.and2, Bl.or2, Bl.xor2]
         return self.do_synth('false', spec, ops, desc='constant false')
 
     def test_multiple_types(self):
-        x = Int('x')
-        y = BitVec('y', 8)
-        int2bv = Func('int2bv', Int2BV(x, 16))
-        bv2int = Func('bv2int', BV2Int(y))
+        x = Symbol('x', INT)
+        y = Symbol('y', BVType())
+        int2bv = Func('int2bv', BV(x, 16))
+        bv2int = Func('bv2int', BVToNatural(y))
         div2 = Func('div2', x / 2)
-        spec = Func('shr2', LShR(ZeroExt(8, y), 1))
+        spec = Func('shr2', BVLShr((BVZExt(y, 8), 1)))
         ops = [int2bv, bv2int, div2]
         return self.do_synth('multiple_types', spec, ops)
 
     def test_precond(self):
-        x = Int('x')
-        b = BitVec('b', 8)
-        int2bv = Func('int2bv', Int2BV(x, 8))
-        bv2int = Func('bv2int', BV2Int(b))
+        x = Symbol('x', INT)
+        b = Symbol('b', BVType())
+        int2bv = Func('int2bv', BV(x, 8))
+        bv2int = Func('bv2int', BVToNatural(b))
         mul2 = Func('addadd', b + b)
         spec = Func('mul2', x * 2, And([x >= 0, x < 128]))
         ops = [int2bv, bv2int, mul2]
         return self.do_synth('preconditions', spec, ops)
 
     def test_constant(self):
-        x, y = Ints('x y')
+        x = Symbol('x', INT)
+        y = Symbol('y', INT)
         mul = Func('mul', x * y)
         spec = Func('const', x + x)
         return self.do_synth('constant', spec, [mul])
 
     def test_abs(self):
         w = 32
-        x, y = BitVecs('x y', w)
+        x = Symbol('x', BVType(w))
+        y = Symbol('y', BVType(w))
         ops = [
             Func('sub', x - y),
             Func('xor', x ^ y),
             Func('shr', x >> y, precond=And([y >= 0, y < w]))
         ]
-        spec = Func('spec', If(x >= 0, x, -x))
+        spec = Func('spec', Ite(x >= 0, x, -x))
         return self.do_synth('abs', spec, ops, theory='QF_FD')
 
     def test_pow(self):
-        x, y = Ints('x y')
+        x = Symbol('x', INT)
+        y = Symbol('y', INT)
         expr = x
         for _ in range(30):
             expr = expr * x
@@ -1140,7 +1157,10 @@ class Tests(TestBase):
         return self.do_synth('pow', spec, ops, max_const=0)
 
     def test_poly(self):
-        a, b, c, h = Ints('a b c h')
+        a = Symbol('a', INT)
+        b = Symbol('b', INT)
+        c = Symbol('c', INT)
+        h = Symbol('h', INT)
         spec = Func('poly', a * h * h + b * h + c)
         ops = [Func('mul', a * b), Func('add', a + b)]
         return self.do_synth('poly', spec, ops, max_const=0)
@@ -1162,7 +1182,7 @@ class Tests(TestBase):
             return c
 
         x = Array('x', IntSort(), IntSort())
-        p = Int('p')
+        p = Symbol(p, INT)
         op = Func('swap', swap(x, p, p + 1))
         spec = Func('rev', permutation(x, [3, 2, 1, 0]))
         return self.do_synth('array', spec, [op])
