@@ -1,7 +1,8 @@
 #! /usr/bin/env python3
-
+import math
 import random
 import itertools
+import sys
 import time
 import json
 import re
@@ -13,7 +14,7 @@ from functools import cached_property, lru_cache
 from contextlib import contextmanager
 
 from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver, is_sat, Implies, Div, BVURem, BVUDiv, \
-    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt
+    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt, BVULE, Select, Store, Array
 from pysmt.typing import *
 
 
@@ -570,15 +571,15 @@ class SpecWithSolver:
             def opnd_set(insn):
                 ext = length - ln_sort.size()
                 assert ext >= 0
-                res = Bv(0, length)
-                one = BitVecVal(1, length, ctx=ctx)
+                res = BV(0, length)
+                one = BV(1, length)
                 for opnd in var_insn_opnds(insn):
-                    res |= one << ZeroExt(ext, opnd)
+                    res |= one << BVZExt(opnd, ext)
                 return res
 
             if opt_insn_order:
                 for insn in range(n_inputs, out_insn - 1):
-                    solver.add(ULE(opnd_set(insn), opnd_set(insn + 1)))
+                    solver.add(BVULE(opnd_set(insn), opnd_set(insn + 1)))
 
             for insn in range(n_inputs, out_insn):
                 op_var = var_insn_op(insn)
@@ -586,7 +587,7 @@ class SpecWithSolver:
                     # if operator is commutative, force the operands to be in ascending order
                     if opt_commutative and op.is_commutative:
                         opnds = list(var_insn_opnds(insn))
-                        c = [ULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
+                        c = [BVULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
                         solver.add(Implies(op_var == op_id, And(c, ctx)))
 
                     # force that at least one operand is not-constant
@@ -680,7 +681,7 @@ class SpecWithSolver:
 
                 # set connection values
                 for _, opnd, v, c, cv in iter_opnd_info(insn, tys, 'verif'):
-                    is_const = is_true(model[c]) if not model[c] is None else False
+                    is_const = (model[c] == TRUE()) if not model[c] is None else False
                     verif.add(is_const == c)
                     if is_const:
                         verif.add(model[cv] == v)
@@ -699,7 +700,7 @@ class SpecWithSolver:
         def create_prg(model):
             def prep_opnds(insn, tys):
                 for _, opnd, v, c, cv in iter_opnd_info(insn, tys, 'verif'):
-                    is_const = is_true(model[c]) if not model[c] is None else False
+                    is_const = (model[c] == TRUE()) if not model[c] is None else False
                     yield (is_const, model[cv] if is_const else model[opnd].as_long())
 
             insns = []
@@ -720,7 +721,7 @@ class SpecWithSolver:
 
         # setup the synthesis solver
         if theory:
-            synth_solver = SolverFor(theory, ctx=ctx)
+            synth_solver = Solver(logic=theory, ctx=ctx)
         else:
             synth_solver = Tactic('psmt', ctx=ctx).solver()
         synth = Goal(ctx=ctx) if reset_solver else synth_solver
@@ -767,7 +768,7 @@ class SpecWithSolver:
                 d(2, f'synth time: {synth_time / 1e9:.3f}')
                 stat['synth'] = synth_time
 
-            if res == sat:
+            if is_sat(res):
                 # if sat, we found location variables
                 m = synth_solver.model()
                 prg = create_prg(m)
@@ -796,7 +797,7 @@ class SpecWithSolver:
                 stat['verif'] = verif_time
                 d(2, f'verif time {verif_time / 1e9:.3f}')
 
-                if res == sat:
+                if is_sat(res):
                     # there is a counterexample, reiterate
                     samples = [_eval_model(self.verif, self.inputs)]
                     d(4, 'verification model', verif.model())
@@ -808,7 +809,7 @@ class SpecWithSolver:
                     d(1, 'no counter example found')
                     return prg, stats
             else:
-                assert res == unsat
+                assert not is_sat(res)
                 d(1, f'synthesis failed for size {n_insns}')
                 return None, stats
 
@@ -832,8 +833,8 @@ def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
     """
 
     all_stats = []
-    ctx = Context()
-    spec_solver = SpecWithSolver(spec, ops, ctx)
+    # ctx = Context()
+    spec_solver = SpecWithSolver(spec, ops)
     init_samples = spec_solver.sample_n(n_samples)
     for n_insns in iter_range:
         with timer() as elapsed:
@@ -1167,7 +1168,7 @@ class Tests(TestBase):
 
     def test_array(self):
         def Arr(name):
-            return Array(name, IntSort(), IntSort())
+            return Array(name, PySMTType(), PySMTType()) # TODO Compare z3 and pysmt Array functions
 
         def permutation(array, perm):
             res = array
@@ -1181,8 +1182,8 @@ class Tests(TestBase):
             c = Store(b, y, Select(a, x))
             return c
 
-        x = Array('x', IntSort(), IntSort())
-        p = Symbol(p, INT)
+        x = Array('x', PySMTType(), PySMTType())
+        p = Symbol('p', INT)
         op = Func('swap', swap(x, p, p + 1))
         spec = Func('rev', permutation(x, [3, 2, 1, 0]))
         return self.do_synth('array', spec, [op])
