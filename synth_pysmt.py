@@ -13,8 +13,9 @@ from functools import cached_property, lru_cache
 
 from contextlib import contextmanager
 
+from pysmt.environment import push_env, Environment
 from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver, is_sat, Implies, Div, BVURem, BVUDiv, \
-    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt, BVULE, Select, Store, Array
+    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt, BVULE, Select, Store, Array, get_env
 from pysmt.typing import *
 
 
@@ -96,11 +97,13 @@ class Spec:
     def __str__(self):
         return self.name
 
-    def translate(self, ctx):
-        ins = [x.translate(ctx) for x in self.inputs]
-        outs = [x.translate(ctx) for x in self.outputs]
-        pres = [x.translate(ctx) for x in self.preconds]
-        phis = [x.translate(ctx) for x in self.phis]
+    # Uses the formulaManager of the current env, no env as parameter needed
+    def translate(self):
+        formulaManager = get_env().formula_manager
+        ins = [formulaManager.normalize(x) for x in self.inputs]
+        outs = [formulaManager.normalize(x) for x in self.outputs]
+        pres = [formulaManager.normalize(x) for x in self.preconds]
+        phis = [formulaManager.normalize(x) for x in self.phis]
         return Spec(self.name, phis, outs, ins, pres)
 
     @cached_property
@@ -113,7 +116,8 @@ class Spec:
 
     @cached_property
     def is_total(self):
-        #ctx = Context()
+        # Create a new environment, no need to save it, the solver automatically uses it
+        push_env()
         solver = Solver()
         spec = self.inputs
         solver.add(Or([Not(p) for p in spec.preconds]))
@@ -121,9 +125,10 @@ class Spec:
 
     @cached_property
     def is_deterministic(self):
-        # ctx = Context()
+        # Create a new environment, no need to save it, the solver automatically uses it
+        push_env()
         solver = Solver()
-        spec = self.inputs # Probably wrong
+        spec = self.translate()
         ins = []
         for ty in self.inputs:
             ins.append(INT(ty))
@@ -186,10 +191,11 @@ class Func(Spec):
     def is_deterministic(self):
         return True
 
-    def translate(self, ctx):
-        ins = [i.translate(ctx) for i in self.inputs]
-        return Func(self.name, self.func.translate(ctx), \
-                    self.precond.translate(ctx), ins)
+    def translate(self):
+        formulaManager = get_env().formula_manager
+        ins = [formulaManager.normalize(i) for i in self.inputs]
+        return Func(self.name, self.func.translate(),
+                    self.precond.translate(), ins)
 
     @cached_property
     def out_type(self):
@@ -201,16 +207,20 @@ class Func(Spec):
         if len(set(v.sort() for v in self.inputs)) > 1:
             return False
         # ctx = Context()
-        precond = self.precond
-        func = self.func
-        ins = self.inputs
-        subst = lambda f, i: f.substitute(list(zip(ins, i)))
+        push_env()
+        env = get_env()
+        precond = self.precond.translate()
+        func = self.func.translate()
+        formulaManager = env.formula_manager()
+        ins = [formulaManager.normalize(x) for x in self.inputs]
+        substituter = env.substituter()
+        subst = lambda f, i: substituter.substitute(f, dict(zip(ins, i)))
         fs = [And([subst(precond, a), subst(precond, b), \
                    subst(func, a) != subst(func, b)]) \
               for a, b in comb(perm(ins), 2)]
         s = Solver()
-        s.add(Or(fs)) # missing context
-        return s.check() == False # unsat
+        s.add_assertion(Or(fs)) # missing context
+        return s.is_unsat()
 
 
 class Prg:
@@ -296,7 +306,7 @@ class EnumBase:
 
 class EnumSortEnum(EnumBase):
     def __init__(self, name, items, ctx):
-        self.sort, cons = PySMTType([str(i) for i in items], name)
+        self.sort, cons = BVType([str(i) for i in items], name)
         super().__init__(items, cons)
 
     def get_from_model_val(self, val):
@@ -307,7 +317,7 @@ class EnumSortEnum(EnumBase):
 
 
 def _bv_sort(n, ctx):
-    return PySMTType(len(bin(n)) - 2) # bv sort
+    return BVType(len(bin(n)) - 2) # bv sort
 
 
 class BitVecEnum(EnumBase):
@@ -336,8 +346,8 @@ def _eval_model(solver, vars):
 
 class SpecWithSolver:
     def __init__(self, spec: Spec, ops: list[Func], logic):
-        self.spec = spec
-        self.ops = ops = [op for op in ops]
+        self.spec = spec = spec.translate()
+        self.ops = ops = [op.translate() for op in ops]
 
         # prepare operator enum sort
         self.op_enum = EnumSortEnum('Operators', ops)
@@ -447,7 +457,7 @@ class SpecWithSolver:
         ty_sort = self.ty_enum.sort
         op_sort = self.op_enum.sort
         ln_sort = _bv_sort(length, ctx)
-        #bl_sort = BoolSort(ctx=ctx)
+        bl_sort = PySMTType()
 
         # get the verification solver and its input and output variables
         eval_ins = self.inputs
@@ -833,7 +843,7 @@ def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
     """
 
     all_stats = []
-    # ctx = Context()
+    push_env()
     spec_solver = SpecWithSolver(spec, ops)
     init_samples = spec_solver.sample_n(n_samples)
     for n_insns in iter_range:
@@ -877,7 +887,7 @@ class Bl:
 class Bv:
     def __init__(self, width):
         self.width = width
-        self.ty = BitVecSort(width)
+        self.ty = BVType(width)
 
         x = Symbol('x', BVType())
         y = Symbol('y', BVType())
