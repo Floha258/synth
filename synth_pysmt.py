@@ -31,10 +31,10 @@ def _collect_vars(expr):
 
     def collect(expr):
         # if len(expr.children()) == 0 and expr.decl().kind() == Z3_OP_UNINTERPRETED:
-        if len(expr.symbols() == 0) and expr.decl().kind() == 0:  # TODO This is obv wrong, but I need to debug it
+        if len(expr.args()) == 0 and expr.node_type() == 7:  # 7 for symbol
             res.add(expr)
         else:
-            for c in expr.children():
+            for c in expr.args():
                 collect(c)
 
     collect(expr)
@@ -121,7 +121,7 @@ class Spec:
         solver = Solver()
         spec = self.inputs
         solver.add(Or([Not(p) for p in spec.preconds]))
-        return solver.check() == False # unsatisfiable
+        return solver.check() == False  # unsatisfiable
 
     @cached_property
     def is_deterministic(self):
@@ -143,7 +143,7 @@ class Spec:
             solver.add(p)
         solver.add(And([a == b for a, b in zip(self.inputs, ins)]))
         solver.add(Or([a != b for a, b in zip(self.outputs, outs)]))
-        return solver.check() == False # unsat
+        return solver.check() == False  # unsat
 
     def instantiate(self, outs, ins):
         self_outs = self.outputs
@@ -181,7 +181,7 @@ class Func(Spec):
         assert _collect_vars(precond) <= input_vars, \
             'precondition uses variables that are not in phi'
         # create Z3 variable of a given sort
-        res_ty = PySMTType(phi) # phi.sort
+        res_ty = PySMTType(phi)  # phi.sort
         self.precond = precond
         self.func = phi
         out = Symbol(res_ty, INT)
@@ -219,7 +219,7 @@ class Func(Spec):
                    subst(func, a) != subst(func, b)]) \
               for a, b in comb(perm(ins), 2)]
         s = Solver()
-        s.add_assertion(Or(fs)) # missing context
+        s.add_assertion(Or(fs))  # missing context
         return s.is_unsat()
 
 
@@ -317,7 +317,7 @@ class EnumSortEnum(EnumBase):
 
 
 def _bv_sort(n, ctx):
-    return BVType(len(bin(n)) - 2) # bv sort
+    return BVType(len(bin(n)) - 2)  # bv sort
 
 
 class BitVecEnum(EnumBase):
@@ -538,7 +538,7 @@ class SpecWithSolver:
             max_const_ran = range(n_inputs, length - 1)
             if not max_const is None and len(max_const_ran) > 0:
                 solver.add(LE(*[v for insn in max_const_ran \
-                                    for v in var_insn_opnds_is_const(insn)], max_const)) # AtMost replace by LE
+                                for v in var_insn_opnds_is_const(insn)], max_const))  # AtMost replace by LE
 
             # if we have at most one type, we don't need type constraints
             if len(self.ty_enum) <= 1:
@@ -733,8 +733,8 @@ class SpecWithSolver:
         if theory:
             synth_solver = Solver(logic=theory, ctx=ctx)
         else:
-            synth_solver = Tactic('psmt', ctx=ctx).solver()
-        synth = Goal(ctx=ctx) if reset_solver else synth_solver
+            synth_solver = Solver()
+        synth = synth_solver
         add_constr_wfp(synth)
         add_constr_opt(synth)
 
@@ -1037,7 +1037,16 @@ class TestBase:
         print(f'total time: {total_time / 1e9:.3f}s')
 
 
+# I only need a function with 3 params currently, since n is always 2
+def at_least(x, y, z, n=2):
+    if n == 2:
+        return Or(And(x, y), And(x, z), And(y, z))
+    else:
+        raise NotImplementedError
+
+
 class Tests(TestBase):
+
     def random_test(self, name, n_vars, create_formula):
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
         spec = Func('rand', create_formula([Symbol(f'x{i}') for i in range(n_vars)]))
@@ -1080,7 +1089,7 @@ class Tests(TestBase):
         ci = Symbol('ci', INT)
         s = Symbol('s', INT)
         co = Symbol('co', INT)
-        add = [co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
+        add = [co == at_least(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
         return self.do_synth('add', spec, ops, desc='1-bit full adder', \
@@ -1092,7 +1101,7 @@ class Tests(TestBase):
         s = Symbol('ci')
         ci = Symbol('s')
         co = Symbol('co')
-        add = [co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
+        add = [co == at_least(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, [Bl.nor3], \
                              desc='1-bit full adder (nor3)', theory='QF_FD')
@@ -1178,7 +1187,7 @@ class Tests(TestBase):
 
     def test_array(self):
         def Arr(name):
-            return Array(name, PySMTType(), PySMTType()) # TODO Compare z3 and pysmt Array functions
+            return Array(name, PySMTType(), PySMTType())  # TODO Compare z3 and pysmt Array functions
 
         def permutation(array, perm):
             res = array
