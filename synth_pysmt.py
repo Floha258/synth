@@ -14,8 +14,7 @@ from functools import cached_property, lru_cache
 from contextlib import contextmanager
 
 from pysmt.environment import push_env, Environment
-from pysmt.shortcuts import TRUE, Symbol, Bool, And, Or, Xor, Not, LE, Solver, is_sat, Implies, Div, BVURem, BVUDiv, \
-    BVSRem, BVLShr, BVUGE, BVULT, Ite, BV, BVToNatural, BVZExt, BVULE, Select, Store, Array, get_env
+from pysmt.shortcuts import *
 from pysmt.typing import *
 
 
@@ -76,7 +75,7 @@ class Spec:
             'number of outputs must match number of specifications'
         assert preconds is None or len(preconds) == len(outputs), \
             'number of preconditions must match'
-        self.ctx = phis[0].ctx
+        # self.ctx = phis[0].ctx
         self.name = name
         self.arity = len(inputs)
         self.inputs = inputs
@@ -181,11 +180,11 @@ class Func(Spec):
         assert _collect_vars(precond) <= input_vars, \
             'precondition uses variables that are not in phi'
         # create Z3 variable of a given sort
-        res_ty = PySMTType(phi)  # phi.sort
+        res_ty = phi.get_type()  # phi.sort
         self.precond = precond
         self.func = phi
-        out = Symbol(res_ty, INT)
-        super().__init__(name, [out == phi], [out], inputs, preconds=[precond])
+        out = FreshSymbol(res_ty)
+        super().__init__(name, [EqualsOrIff(out, phi)], [out], inputs, preconds=[precond])
 
     @cached_property
     def is_deterministic(self):
@@ -881,7 +880,7 @@ class Bl:
 
     mux2 = Func('mux2', Or(And(w, x), And(Not(w), y)))
     maj3 = Func('maj3', Or(And(x, y), And(x, z), And(y, z)))
-    eq2 = Func('eq2', x == y)
+    eq2 = Func('eq2', EqualsOrIff(x, y))
 
 
 class Bv:
@@ -1032,6 +1031,7 @@ class TestBase:
         tests.sort()
         total_time = 0
         for name in tests:
+            push_env()
             total_time += getattr(self, name)()
             print('')
         print(f'total time: {total_time / 1e9:.3f}s')
@@ -1159,8 +1159,8 @@ class Tests(TestBase):
         x = Symbol('x', BVType(w))
         y = Symbol('y', BVType(w))
         ops = [
-            Func('sub', x - y),
-            Func('xor', x ^ y),
+            Func('sub', Minus(x, y)),
+            Func('xor', Xor(x, y)),
             Func('shr', x >> y, precond=And([y >= 0, y < w]))
         ]
         spec = Func('spec', Ite(x >= 0, x, -x))
