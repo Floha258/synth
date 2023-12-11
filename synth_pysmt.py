@@ -107,11 +107,11 @@ class Spec:
 
     @cached_property
     def out_types(self):
-        return [v.sort() for v in self.outputs]
+        return [v.get_type() for v in self.outputs]
 
     @cached_property
     def in_types(self):
-        return [v.sort() for v in self.inputs]
+        return [v.get_type() for v in self.inputs]
 
     @cached_property
     def is_total(self):
@@ -193,8 +193,10 @@ class Func(Spec):
     def translate(self):
         formulaManager = get_env().formula_manager
         ins = [formulaManager.normalize(i) for i in self.inputs]
-        return Func(self.name, self.func.translate(),
-                    self.precond.translate(), ins)
+        normalized_func = formulaManager.normalize(self.func)
+        normalized_precond = formulaManager.normalize(self.precond)
+        return Func(self.name, normalized_func,
+                    normalized_precond, ins)
 
     @cached_property
     def out_type(self):
@@ -304,8 +306,16 @@ class EnumBase:
 
 
 class EnumSortEnum(EnumBase):
-    def __init__(self, name, items, ctx):
-        self.sort, cons = BVType([str(i) for i in items], name)
+    def __init__(self, name, items):
+        w = len(items).bit_length()
+        cons = [BV(i, w) for i in range(len(items))]
+        self.sort = BVType(w)
+
+        # Add constrains to ensure only valid values can be selected
+        lower_constr = BV(0, w)
+        higher_constr = BV(len(items) - 1, w)
+        self.constraints = Or(And(BVUGE(con, lower_constr), BVULE(con, higher_constr)) for con in cons)
+
         super().__init__(items, cons)
 
     def get_from_model_val(self, val):
@@ -344,7 +354,7 @@ def _eval_model(solver, vars):
 
 
 class SpecWithSolver:
-    def __init__(self, spec: Spec, ops: list[Func], logic):
+    def __init__(self, spec: Spec, ops: list[Func]):
         self.spec = spec = spec.translate()
         self.ops = ops = [op.translate() for op in ops]
 
@@ -356,12 +366,12 @@ class SpecWithSolver:
         self.ty_enum = EnumSortEnum('Types', types)
 
         # prepare verification solver
-        self.verif = Solver(logic=logic)
-        self.eval = Solver(logic=logic)
+        self.verif = Solver() # Solver(logic=logic)
+        self.eval = Solver() # Solver(logic=logic)
         self.inputs = spec.inputs
         self.outputs = spec.outputs
 
-        self.verif.add(Or([And([pre, Not(phi)]) \
+        self.verif.add_assertions(Or([And([pre, Not(phi)]) \
                            for pre, phi in zip(spec.preconds, spec.phis)]))
         for phi in spec.phis:
             self.eval.add(phi)
@@ -843,6 +853,7 @@ def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
 
     all_stats = []
     push_env()
+    get_env().enable_infix_notation = True
     spec_solver = SpecWithSolver(spec, ops)
     init_samples = spec_solver.sample_n(n_samples)
     for n_insns in iter_range:
@@ -1032,6 +1043,7 @@ class TestBase:
         total_time = 0
         for name in tests:
             push_env()
+            get_env().enable_infix_notation = True
             total_time += getattr(self, name)()
             print('')
         print(f'total time: {total_time / 1e9:.3f}s')
@@ -1159,8 +1171,8 @@ class Tests(TestBase):
         x = Symbol('x', BVType(w))
         y = Symbol('y', BVType(w))
         ops = [
-            Func('sub', Minus(x, y)),
-            Func('xor', Xor(x, y)),
+            Func('sub', x - y),
+            Func('xor', x ^ y),
             Func('shr', x >> y, precond=And([y >= 0, y < w]))
         ]
         spec = Func('spec', Ite(x >= 0, x, -x))
