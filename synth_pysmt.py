@@ -118,9 +118,9 @@ class Spec:
         # Create a new environment, no need to save it, the solver automatically uses it
         push_env()
         solver = Solver()
-        spec = self.inputs
-        solver.add(Or([Not(p) for p in spec.preconds]))
-        return solver.check() == False  # unsatisfiable
+        spec = self.translate()
+        solver.add_assertion(Or([Not(p) for p in spec.preconds]))
+        return not solver.solve()
 
     @cached_property
     def is_deterministic(self):
@@ -325,7 +325,7 @@ class EnumSortEnum(EnumBase):
         pass
 
 
-def _bv_sort(n, ctx):
+def _bv_sort(n):
     return BVType(len(bin(n)) - 2)  # bv sort
 
 
@@ -348,8 +348,8 @@ def timer():
 
 
 def _eval_model(solver, vars):
-    m = solver.model()
-    e = lambda v: m.evaluate(v, model_completion=True)
+    m = solver.get_model()
+    e = lambda v: m.get_value(v, model_completion=True)
     return [e(v) for v in vars]
 
 
@@ -371,18 +371,18 @@ class SpecWithSolver:
         self.inputs = spec.inputs
         self.outputs = spec.outputs
 
-        self.verif.add_assertions(Or([And([pre, Not(phi)]) \
-                           for pre, phi in zip(spec.preconds, spec.phis)]))
+        self.verif.add_assertions([Or([And([pre, Not(phi)]) \
+                           for pre, phi in zip(spec.preconds, spec.phis)])])
         for phi in spec.phis:
-            self.eval.add(phi)
+            self.eval.add_assertions([phi])
 
     def eval_spec(self, input_vals):
         s = self.eval
         s.push()
         for var, val in zip(self.inputs, input_vals):
-            s.add(var == val)
-        res = s.check()
-        assert is_sat(res)
+            s.add_assertion(EqualsOrIff(var, val))
+        res = s.solve()
+        assert res
         res = _eval_model(s, self.outputs)
         s.pop()
         return res
@@ -398,14 +398,13 @@ class SpecWithSolver:
         s = self.eval
         s.push()
         for i in range(n):
-            c = s.check()
-            if is_sat(c):
+            c = s.solve()
+            if not c:
                 assert len(res) > 0, 'must have sampled the spec at least once'
                 break
-            m = s.model()
             ins = _eval_model(s, self.inputs)
             res += [ins]
-            s.add(Or([v != iv for v, iv in zip(self.inputs, ins)]))
+            s.add_assertion(Or([NotEquals(v, iv) for v, iv in zip(self.inputs, ins)]))
         s.pop()
         return res
 
@@ -450,7 +449,7 @@ class SpecWithSolver:
         d(1, 'size', n_insns)
 
         ops = self.ops
-        ctx = self.ctx
+        # ctx = self.ctx
         spec = self.spec
         in_tys = spec.in_types
         out_tys = spec.out_types
@@ -465,8 +464,8 @@ class SpecWithSolver:
         # get the sorts for the variables used in synthesis
         ty_sort = self.ty_enum.sort
         op_sort = self.op_enum.sort
-        ln_sort = _bv_sort(length, ctx)
-        bl_sort = PySMTType()
+        ln_sort = _bv_sort(length)
+        bl_sort = BOOL
 
         # get the verification solver and its input and output variables
         eval_ins = self.inputs
@@ -529,7 +528,7 @@ class SpecWithSolver:
             # i.e.: we can only use results of preceding instructions
             for insn in range(length):
                 for v in var_insn_opnds(insn):
-                    solver.add(LE(v, insn - 1))
+                    solver.add_assertion(BVULE(v, BV(insn - 1, length)))
 
             # pin operands of an instruction that are not used (because of arity)
             # to the last input of that instruction
@@ -538,7 +537,7 @@ class SpecWithSolver:
                 for op, op_id in self.op_enum.item_to_cons.items():
                     unused = opnds[op.arity:]
                     for opnd in unused:
-                        solver.add(Implies(var_insn_op(insn) == op_id, \
+                        solver.add_assertion(Implies(var_insn_op(insn) == op_id, \
                                            opnd == opnds[op.arity - 1]))
 
             # Add a constraint for the maximum amount of constants if specified.
@@ -546,7 +545,7 @@ class SpecWithSolver:
             # to synthesize constant outputs correctly.
             max_const_ran = range(n_inputs, length - 1)
             if not max_const is None and len(max_const_ran) > 0:
-                solver.add(LE(*[v for insn in max_const_ran \
+                solver.add_assertion(LE(*[v for insn in max_const_ran \
                                 for v in var_insn_opnds_is_const(insn)], max_const))  # AtMost replace by LE
 
             # if we have at most one type, we don't need type constraints
@@ -642,12 +641,13 @@ class SpecWithSolver:
         def add_constr_conn(solver, insn, tys, instance):
             for ty, l, v, c, cv in iter_opnd_info(insn, tys, instance):
                 # if the operand is a constant, its value is the constant value
-                solver.add(Implies(c, v == cv))
+                solver.add_assertion(Implies(c, EqualsOrIff(v, cv)))
                 # else, for other each instruction preceding it ...
                 for other in range(insn):
                     r = var_insn_res(other, ty, instance)
                     # ... the operand is equal to the result of the instruction
-                    solver.add(Implies(Not(c), Implies(l == other, v == r)))
+                    width = 2 # TODO get width of l
+                    solver.add_assertion(Implies(Not(c), Implies(EqualsOrIff(l, BV(other, width)), EqualsOrIff(v, r))))
 
         def add_constr_instance(solver, instance):
             # for all instructions that get an op
@@ -671,10 +671,10 @@ class SpecWithSolver:
             for inp, val in enumerate(in_vals):
                 assert not val is None
                 res = var_input_res(inp, instance)
-                solver.add(res == val)
+                solver.add_assertion(EqualsOrIff(res, val))
             for out, val in zip(var_outs_val(instance), out_vals):
                 assert not val is None
-                solver.add(out == val)
+                solver.add_assertion(EqualsOrIff(out, val))
 
         def add_constr_io_spec(solver, instance, in_vals):
             # add input value constraints
@@ -740,7 +740,7 @@ class SpecWithSolver:
 
         # setup the synthesis solver
         if theory:
-            synth_solver = Solver(logic=theory, ctx=ctx)
+            synth_solver = Solver(logic=theory)
         else:
             synth_solver = Solver()
         synth = synth_solver
@@ -778,10 +778,10 @@ class SpecWithSolver:
             d(5, 'synth', samples_str, synth)
             write_smt2(synth, 'synth', n_insns, i)
             if reset_solver:
-                synth_solver.reset()
-                synth_solver.add(synth)
+                synth_solver.reset_assertions()
+                # synth_solver.add_assertion(synth)
             with timer() as elapsed:
-                res = synth_solver.check()
+                res = synth_solver.solve()
                 synth_time = elapsed()
                 d(3, synth_solver.statistics())
                 d(2, f'synth time: {synth_time / 1e9:.3f}')
@@ -1105,7 +1105,7 @@ class Tests(TestBase):
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
         return self.do_synth('add', spec, ops, desc='1-bit full adder', \
-                             theory='QF_FD')
+                             theory='QF_AUFBV')
 
     def test_add_apollo(self):
         x = Symbol('x')
@@ -1176,7 +1176,7 @@ class Tests(TestBase):
             Func('shr', x >> y, precond=And([y >= 0, y < w]))
         ]
         spec = Func('spec', Ite(x >= 0, x, -x))
-        return self.do_synth('abs', spec, ops, theory='QF_FD')
+        return self.do_synth('abs', spec, ops, theory='QF_AUFBV')
 
     def test_pow(self):
         x = Symbol('x', INT)
