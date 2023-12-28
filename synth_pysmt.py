@@ -17,6 +17,8 @@ from pysmt.environment import push_env, Environment
 from pysmt.shortcuts import *
 from pysmt.typing import *
 
+solverName = 'z3'
+
 
 # from typing import Any
 
@@ -117,7 +119,7 @@ class Spec:
     def is_total(self):
         # Create a new environment, no need to save it, the solver automatically uses it
         push_env()
-        solver = Solver()
+        solver = Solver(name=solverName)
         spec = self.translate()
         solver.add_assertion(Or([Not(p) for p in spec.preconds]))
         return not solver.solve()
@@ -126,37 +128,34 @@ class Spec:
     def is_deterministic(self):
         # Create a new environment, no need to save it, the solver automatically uses it
         push_env()
-        solver = Solver()
+        solver = Solver(name=solverName)
         spec = self.translate()
         ins = []
-        for ty in self.inputs:
-            ins.append(INT(ty))
-        outs = []
-        for ty in self.outputs:
-            outs.append(INT(ty))
+        ins = [FreshSymbol(ty) for ty in spec.in_types]
+        outs = [FreshSymbol(ty) for ty in spec.out_types]
         _, phis = spec.instantiate(outs, ins)
-        solver.add(And([p for p in spec.preconds]))
+        solver.add_assertion(And([p for p in spec.preconds]))
         for p in spec.phis:
-            solver.add(p)
+            solver.add_assertion(p)
         for p in phis:
-            solver.add(p)
-        solver.add(And([a == b for a, b in zip(self.inputs, ins)]))
-        solver.add(Or([a != b for a, b in zip(self.outputs, outs)]))
-        return solver.check() == False  # unsat
+            solver.add_assertion(p)
+        solver.add_assertion(And([EqualsOrIff(a, b) for a, b in zip(self.inputs, ins)]))
+        solver.add_assertion(Or([Not(EqualsOrIff(a, b)) for a, b in zip(self.outputs, outs)]))
+        return not solver.solve()  # unsat
 
     def instantiate(self, outs, ins):
         self_outs = self.outputs
         self_ins = self.inputs
         assert len(outs) == len(self_outs)
         assert len(ins) == len(self_ins)
-        assert all(x.ctx == y.ctx for x, y in zip(self_outs + self_ins, outs + ins))
+        # assert all(x.ctx == y.ctx for x, y in zip(self_outs + self_ins, outs + ins))
         # [substitute(phi, list(zip(self_outs + self_ins, outs + ins))) for phi in self.phis]
         phis = []
         for phi in self.phis:
-            phis.append(phi.substitue(list(zip(self_outs + self_ins, outs + ins))))
+            phis.append(phi.substitute(dict(zip(self_outs + self_ins, outs + ins))))
         pres = []
         for p in self.preconds:
-            pres.append(p.substitute(list(zip(self_ins, ins))))
+            pres.append(p.substitute(dict(zip(self_ins, ins))))
         return pres, phis
 
 
@@ -219,7 +218,7 @@ class Func(Spec):
         fs = [And([subst(precond, a), subst(precond, b), \
                    subst(func, a) != subst(func, b)]) \
               for a, b in comb(perm(ins), 2)]
-        s = Solver()
+        s = Solver(name=solverName)
         s.add_assertion(Or(fs))  # missing context
         return s.is_unsat()
 
@@ -366,8 +365,8 @@ class SpecWithSolver:
         self.ty_enum = EnumSortEnum('Types', types)
 
         # prepare verification solver
-        self.verif = Solver() # Solver(logic=logic)
-        self.eval = Solver() # Solver(logic=logic)
+        self.verif = Solver(name=solverName) # Solver(logic=logic)
+        self.eval = Solver(name=solverName) # Solver(logic=logic)
         self.inputs = spec.inputs
         self.outputs = spec.outputs
 
@@ -404,7 +403,7 @@ class SpecWithSolver:
                 break
             ins = _eval_model(s, self.inputs)
             res += [ins]
-            s.add_assertion(Or([NotEquals(v, iv) for v, iv in zip(self.inputs, ins)]))
+            s.add_assertion(Or([Not(EqualsOrIff(v, iv)) for v, iv in zip(self.inputs, ins)]))
         s.pop()
         return res
 
@@ -528,7 +527,7 @@ class SpecWithSolver:
             # i.e.: we can only use results of preceding instructions
             for insn in range(length):
                 for v in var_insn_opnds(insn):
-                    solver.add_assertion(BVULE(v, BV(insn - 1, length)))
+                    solver.add_assertion(BVULE(v, BV(insn - 1, v.bv_width())))
 
             # pin operands of an instruction that are not used (because of arity)
             # to the last input of that instruction
@@ -646,7 +645,7 @@ class SpecWithSolver:
                 for other in range(insn):
                     r = var_insn_res(other, ty, instance)
                     # ... the operand is equal to the result of the instruction
-                    width = 2 # TODO get width of l
+                    width = l.bv_width()
                     solver.add_assertion(Implies(Not(c), Implies(EqualsOrIff(l, BV(other, width)), EqualsOrIff(v, r))))
 
         def add_constr_instance(solver, instance):
@@ -701,26 +700,27 @@ class SpecWithSolver:
                 # set connection values
                 for _, opnd, v, c, cv in iter_opnd_info(insn, tys, 'verif'):
                     is_const = (model[c] == TRUE()) if not model[c] is None else False
-                    verif.add(is_const == c)
+                    is_const_val = TRUE() if is_const else FALSE()
+                    verif.add_assertion(EqualsOrIff(is_const_val, c))
                     if is_const:
-                        verif.add(model[cv] == v)
+                        verif.add_assertion(EqualsOrIff(model[cv], v))
                     else:
-                        verif.add(model[opnd] == opnd)
+                        verif.add_assertion(EqualsOrIff(model[opnd], opnd))
 
         def add_constr_spec_verif():
             verif_outs = list(var_outs_val('verif'))
             assert len(verif_outs) == len(eval_outs)
             assert len(verif_outs) == len(spec.preconds)
             for inp, e in enumerate(eval_ins):
-                verif.add(var_input_res(inp, 'verif') == e)
+                verif.add_assertion(EqualsOrIff(var_input_res(inp, 'verif'), e))
             for v, e in zip(verif_outs, eval_outs):
-                verif.add(v == e)
+                verif.add_assertion(EqualsOrIff(v, e))
 
         def create_prg(model):
             def prep_opnds(insn, tys):
                 for _, opnd, v, c, cv in iter_opnd_info(insn, tys, 'verif'):
                     is_const = (model[c] == TRUE()) if not model[c] is None else False
-                    yield (is_const, model[cv] if is_const else model[opnd].as_long())
+                    yield (is_const, model[cv] if is_const else model[opnd].constant_value())
 
             insns = []
             for insn in range(n_inputs, length - 1):
@@ -740,9 +740,9 @@ class SpecWithSolver:
 
         # setup the synthesis solver
         if theory:
-            synth_solver = Solver(logic=theory)
+            synth_solver = Solver(logic=theory, name=solverName)
         else:
-            synth_solver = Solver()
+            synth_solver = Solver(name=solverName)
         synth = synth_solver
         add_constr_wfp(synth)
         add_constr_opt(synth)
@@ -783,13 +783,13 @@ class SpecWithSolver:
             with timer() as elapsed:
                 res = synth_solver.solve()
                 synth_time = elapsed()
-                d(3, synth_solver.statistics())
+                # d(3, synth_solver.statistics())
                 d(2, f'synth time: {synth_time / 1e9:.3f}')
                 stat['synth'] = synth_time
 
-            if is_sat(res):
+            if res:
                 # if sat, we found location variables
-                m = synth_solver.model()
+                m = synth_solver.get_model()
                 prg = create_prg(m)
                 stat['prg'] = str(prg).replace('\n', '; ')
 
@@ -811,15 +811,15 @@ class SpecWithSolver:
                 d(5, 'verif', samples_str, verif)
                 write_smt2(verif, 'verif', n_insns, samples_str)
                 with timer() as elapsed:
-                    res = verif.check()
+                    res = verif.solve()
                     verif_time = elapsed()
                 stat['verif'] = verif_time
                 d(2, f'verif time {verif_time / 1e9:.3f}')
 
-                if is_sat(res):
+                if res:
                     # there is a counterexample, reiterate
                     samples = [_eval_model(self.verif, self.inputs)]
-                    d(4, 'verification model', verif.model())
+                    d(4, 'verification model', verif.get_model())
                     d(4, 'verif sample', samples[0])
                     verif.pop()
                 else:
@@ -1096,12 +1096,12 @@ class Tests(TestBase):
         return self.do_synth('zero', spec, ops, max_const=0, theory='QF_FD')
 
     def test_add(self):
-        x = Symbol('x', INT)
-        y = Symbol('y', INT)
-        ci = Symbol('ci', INT)
-        s = Symbol('s', INT)
-        co = Symbol('co', INT)
-        add = [co == at_least(x, y, ci, 2), s == Xor(x, Xor(y, ci))]
+        x = Symbol('x', BOOL)
+        y = Symbol('y', BOOL)
+        ci = Symbol('ci', BOOL)
+        s = Symbol('s', BOOL)
+        co = Symbol('co', BOOL)
+        add = [EqualsOrIff(co, at_least(x, y, ci, 2)), EqualsOrIff(s, Xor(x, Xor(y, ci)))]
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
         return self.do_synth('add', spec, ops, desc='1-bit full adder', \
