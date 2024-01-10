@@ -775,7 +775,7 @@ class SpecWithSolver:
                 i += 1
 
             samples_str = f'{i - old_i}' if i - old_i > 1 else old_i
-            d(5, 'synth', samples_str, synth)
+            d(5, 'synth', samples_str, synth.assertions)
             write_smt2(synth, 'synth', n_insns, i)
             if reset_solver:
                 synth_solver.reset_assertions()
@@ -793,7 +793,7 @@ class SpecWithSolver:
                 prg = create_prg(m)
                 stat['prg'] = str(prg).replace('\n', '; ')
 
-                d(4, 'model: ', m)
+                d(4, 'model: ', m.z3_model)
                 d(2, 'program:', stat['prg'])
 
                 # push a new verification solver state
@@ -808,7 +808,7 @@ class SpecWithSolver:
                 # in the verification constraint
                 add_constr_sol_for_verif(m)
 
-                d(5, 'verif', samples_str, verif)
+                d(5, 'verif', samples_str, verif.assertions)
                 write_smt2(verif, 'verif', n_insns, samples_str)
                 with timer() as elapsed:
                     res = verif.solve()
