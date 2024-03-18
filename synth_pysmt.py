@@ -313,7 +313,7 @@ class EnumSortEnum(EnumBase):
         # Add constrains to ensure only valid values can be selected
         lower_constr = BV(0, w)
         higher_constr = BV(len(items) - 1, w)
-        self.constraints = Or(And(BVUGE(con, lower_constr), BVULE(con, higher_constr)) for con in cons)
+        self.constraints = Or(And(BVSGE(con, lower_constr), BVSLE(con, higher_constr)) for con in cons)
 
         super().__init__(items, cons)
 
@@ -408,7 +408,7 @@ class SpecWithSolver:
         return res
 
     def synth_n(self, n_insns, \
-                debug=0, max_const=None, init_samples=[], \
+                debug=10, max_const=None, init_samples=[], \
                 output_prefix=None, theory=None, reset_solver=True, \
                 opt_no_dead_code=True, opt_no_cse=True, opt_const=True, \
                 opt_commutative=True, opt_insn_order=True):
@@ -527,7 +527,7 @@ class SpecWithSolver:
             # i.e.: we can only use results of preceding instructions
             for insn in range(length):
                 for v in var_insn_opnds(insn):
-                    solver.add_assertion(BVULE(v, BV(insn - 1, v.bv_width())))
+                    solver.add_assertion(BVSLE(v, BV(insn - 1, v.bv_width())))
 
             # pin operands of an instruction that are not used (because of arity)
             # to the last input of that instruction
@@ -596,7 +596,7 @@ class SpecWithSolver:
 
             if opt_insn_order:
                 for insn in range(n_inputs, out_insn - 1):
-                    solver.add(BVULE(opnd_set(insn), opnd_set(insn + 1)))
+                    solver.add(BVSLE(opnd_set(insn), opnd_set(insn + 1)))
 
             for insn in range(n_inputs, out_insn):
                 op_var = var_insn_op(insn)
@@ -604,7 +604,7 @@ class SpecWithSolver:
                     # if operator is commutative, force the operands to be in ascending order
                     if opt_commutative and op.is_commutative:
                         opnds = list(var_insn_opnds(insn))
-                        c = [BVULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
+                        c = [BVSLE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
                         solver.add(Implies(op_var == op_id, And(c, ctx)))
 
                     # force that at least one operand is not-constant
@@ -775,7 +775,7 @@ class SpecWithSolver:
                 i += 1
 
             samples_str = f'{i - old_i}' if i - old_i > 1 else old_i
-            d(5, 'synth', samples_str, synth.assertions)
+            d(5, 'synth', samples_str, [assertion.serialize() for assertion in synth.assertions])
             write_smt2(synth, 'synth', n_insns, i)
             if reset_solver:
                 synth_solver.reset_assertions()
@@ -808,7 +808,7 @@ class SpecWithSolver:
                 # in the verification constraint
                 add_constr_sol_for_verif(m)
 
-                d(5, 'verif', samples_str, verif.assertions)
+                d(5, 'verif', samples_str, [assertion.serialize() for assertion in verif.assertions])
                 write_smt2(verif, 'verif', n_insns, samples_str)
                 with timer() as elapsed:
                     res = verif.solve()
@@ -925,8 +925,8 @@ class Bv:
             Func('ashr', x >> y, precond=shift_precond),
             Func('uge', Ite(BVUGE(x, y), o, z)),
             Func('ult', Ite(BVULT(x, y), o, z)),
-            Func('sge', Ite(x >= y, o, z)),
-            Func('slt', Ite(x < y, o, z)),
+            Func('sge', Ite(BVSGE(x, y), o, z)),
+            Func('slt', Ite(BVSLT(x, y), o, z)),
         ]
 
         for op in l:
@@ -1008,7 +1008,7 @@ def create_bool_func(func):
 
 
 class TestBase:
-    def __init__(self, maxlen=10, debug=0, stats=False, graph=False, tests=None, write=None):
+    def __init__(self, maxlen=10, debug=10, stats=False, graph=False, tests=None, write=None):
         self.debug = debug
         self.max_length = maxlen
         self.write_stats = stats
@@ -1173,9 +1173,9 @@ class Tests(TestBase):
         ops = [
             Func('sub', x - y),
             Func('xor', x ^ y),
-            Func('shr', x >> y, precond=And([y >= 0, y < w]))
+            Func('shr', x >> y, precond=And([BVSGE(y, BV(0, w)), BVSLE(y, BV(w, w))]))
         ]
-        spec = Func('spec', Ite(x >= 0, x, -x))
+        spec = Func('spec', Ite(BVSGE(x, BV(0, w)), x, BVNeg(x)))
         return self.do_synth('abs', spec, ops, theory='QF_AUFBV')
 
     def test_pow(self):
@@ -1223,7 +1223,7 @@ class Tests(TestBase):
 def parse_standard_args():
     import argparse
     parser = argparse.ArgumentParser(prog="synth")
-    parser.add_argument('-d', '--debug', type=int, default=0)
+    parser.add_argument('-d', '--debug', type=int, default=10)
     parser.add_argument('-m', '--maxlen', type=int, default=10)
     parser.add_argument('-s', '--stats', default=False, action='store_true')
     parser.add_argument('-g', '--graph', default=False, action='store_true')
