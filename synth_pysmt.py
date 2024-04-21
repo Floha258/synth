@@ -160,7 +160,7 @@ class Spec:
 
 
 class Func(Spec):
-    def __init__(self, name, phi, precond=Bool(True), inputs=[]):
+    def __init__(self, name, phi, precond=TRUE(), inputs=[]):
         """Creates an Op from a Z3 expression.
 
         Attributes:
@@ -203,24 +203,25 @@ class Func(Spec):
 
     @cached_property
     def is_commutative(self):
-        # if the operator inputs have different sorts, it cannot be commutative
-        if len(set(v.sort() for v in self.inputs)) > 1:
+        # if the operator inputs have different types, it cannot be commutative
+        if len(set(v.get_type() for v in self.inputs)) > 1:
             return False
         # ctx = Context()
         push_env()
         env = get_env()
-        precond = self.precond.translate()
-        func = self.func.translate()
-        formulaManager = env.formula_manager()
+        formulaManager = env.formula_manager
+        precond = formulaManager.normalize(self.precond)
+        func = formulaManager.normalize(self.func)
         ins = [formulaManager.normalize(x) for x in self.inputs]
-        substituter = env.substituter()
+        substituter = env.substituter
         subst = lambda f, i: substituter.substitute(f, dict(zip(ins, i)))
         fs = [And([subst(precond, a), subst(precond, b), \
-                   subst(func, a) != subst(func, b)]) \
+                   NotEquals(subst(func, a), subst(func, b))]) \
               for a, b in comb(perm(ins), 2)]
         s = Solver(name=solverName)
-        s.add_assertion(Or(fs))  # missing context
-        return s.is_unsat()
+        s.add_assertion(Or(fs)) # missing context
+        res = s.solve()
+        return not res
 
 
 class Prg:
@@ -492,7 +493,7 @@ class SpecWithSolver:
 
         def var_insn_op_opnds_const_val(insn, opnd_tys):
             for opnd, ty in enumerate(opnd_tys):
-                yield get_var(ty, f'insn_{insn}_opnd_{opnd}_{ty_name(ty)}_const_val')
+                yield get_var(ty, f'|insn_{insn}_opnd_{opnd}_{ty_name(ty)}_const_val|')
 
         def var_insn_opnds(insn):
             for opnd in range(arities[insn]):
@@ -500,7 +501,7 @@ class SpecWithSolver:
 
         def var_insn_opnds_val(insn, tys, instance):
             for opnd, ty in enumerate(tys):
-                yield get_var(ty, f'insn_{insn}_opnd_{opnd}_{ty_name(ty)}_{instance}')
+                yield get_var(ty, f'|insn_{insn}_opnd_{opnd}_{ty_name(ty)}_{instance}|')
 
         def var_outs_val(instance):
             for opnd in var_insn_opnds_val(out_insn, out_tys, instance):
@@ -511,7 +512,7 @@ class SpecWithSolver:
                 yield get_var(ty_sort, f'insn_{insn}_opnd_type_{opnd}')
 
         def var_insn_res(insn, ty, instance):
-            return get_var(ty, f'insn_{insn}_res_{ty_name(ty)}_{instance}')
+            return get_var(ty, f'|insn_{insn}_res_{ty_name(ty)}_{instance}|')
 
         def var_insn_res_type(insn):
             return get_var(ty_sort, f'insn_{insn}_res_type')
@@ -527,7 +528,7 @@ class SpecWithSolver:
             # i.e.: we can only use results of preceding instructions
             for insn in range(length):
                 for v in var_insn_opnds(insn):
-                    solver.add_assertion(BVSLE(v, BV(insn - 1, v.bv_width())))
+                    solver.add_assertion(BVULE(v, BV(insn - 1, v.bv_width())))
 
             # pin operands of an instruction that are not used (because of arity)
             # to the last input of that instruction
@@ -596,7 +597,7 @@ class SpecWithSolver:
 
             if opt_insn_order:
                 for insn in range(n_inputs, out_insn - 1):
-                    solver.add(BVSLE(opnd_set(insn), opnd_set(insn + 1)))
+                    solver.add(BVULE(opnd_set(insn), opnd_set(insn + 1)))
 
             for insn in range(n_inputs, out_insn):
                 op_var = var_insn_op(insn)
@@ -604,31 +605,36 @@ class SpecWithSolver:
                     # if operator is commutative, force the operands to be in ascending order
                     if opt_commutative and op.is_commutative:
                         opnds = list(var_insn_opnds(insn))
-                        c = [BVSLE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
-                        solver.add(Implies(op_var == op_id, And(c, ctx)))
+                        c = [BVULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
+                        solver.add_assertion(Implies(NotEquals(op_var, op_id), And(c)))
 
                     # force that at least one operand is not-constant
                     # otherwise, the operation is not needed because it would be fully constant
                     if opt_const:
                         vars = [Not(v) for v in var_insn_opnds_is_const(insn)][:op.arity]
                         assert len(vars) > 0
-                        solver.add(Implies(op_var == op_id, Or(vars, ctx)))
+                        solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), Or(vars)))
 
                 # Computations must not be replicated: If an operation appears again
                 # in the program, at least one of the operands must be different from
                 # a previous occurrence of the same operation.
                 if opt_no_cse:
                     for other in range(n_inputs, insn):
-                        un_eq = [p != q for p, q in zip(var_insn_opnds(insn), var_insn_opnds(other))]
+                        un_eq = [NotEquals(p, q) for p, q in zip(var_insn_opnds(insn), var_insn_opnds(other))]
                         assert len(un_eq) > 0
-                        solver.add(Implies(op_var == var_insn_op(other), Or(un_eq)))
+                        solver.add_assertion(Implies(EqualsOrIff(op_var, var_insn_op(other)), Or(un_eq)))
 
             # no dead code: each produced value is used
             if opt_no_dead_code:
+                opnds = []
                 for prod in range(n_inputs, length):
-                    opnds = [prod == v for cons in range(prod + 1, length) for v in var_insn_opnds(cons)]
-                    if len(opnds) > 0:
-                        solver.add(Or(opnds))
+                    # opnds = [EqualsOrIff(prod, v) for cons in range(prod + 1, length) for v in var_insn_opnds(cons)]
+                    for cons in range(prod + 1, length):
+                        for v in var_insn_opnds(cons):
+                            bvLength = v.bv_width()
+                            opnds += [EqualsOrIff(BV(prod, bvLength), v)]
+                if len(opnds) > 0:
+                    solver.add_assertion(Or(opnds))
 
         def iter_opnd_info(insn, tys, instance):
             return zip(tys, \
@@ -657,7 +663,7 @@ class SpecWithSolver:
                     res = var_insn_res(insn, op.out_type, instance)
                     opnds = list(var_insn_opnds_val(insn, op.in_types, instance))
                     [precond], [phi] = op.instantiate([res], opnds)
-                    solver.add(Implies(op_var == op_id, And([precond, phi])))
+                    solver.add_assertion(Implies(op_var == op_id, And([precond, phi])))
                 # connect values of operands to values of corresponding results
                 for op in ops:
                     add_constr_conn(solver, insn, op.in_types, instance)
@@ -743,7 +749,7 @@ class SpecWithSolver:
             synth_solver = Solver(logic=theory, name=solverName)
         else:
             synth_solver = Solver(name=solverName)
-        synth = synth_solver
+        synth = Solver(logic=theory, name=solverName) if theory else Solver(name=solverName)
         add_constr_wfp(synth)
         add_constr_opt(synth)
 
@@ -779,7 +785,7 @@ class SpecWithSolver:
             write_smt2(synth, 'synth', n_insns, i)
             if reset_solver:
                 synth_solver.reset_assertions()
-                # synth_solver.add_assertion(synth)
+                synth_solver.add_assertions([assertion for assertion in synth.assertions])
             with timer() as elapsed:
                 res = synth_solver.solve()
                 synth_time = elapsed()
@@ -828,7 +834,7 @@ class SpecWithSolver:
                     d(1, 'no counter example found')
                     return prg, stats
             else:
-                assert not is_sat(res)
+                assert not res
                 d(1, f'synthesis failed for size {n_insns}')
                 return None, stats
 
