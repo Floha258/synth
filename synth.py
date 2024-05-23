@@ -594,6 +594,7 @@ class SpecWithSolver:
             if opt_no_dead_code:
                 for prod in range(n_inputs, length):
                     opnds = [prod == v for cons in range(prod + 1, length) for v in var_insn_opnds(cons)]
+                    print(f'debug {[v for cons in range(prod + 1, length) for v in var_insn_opnds(cons)]}')
                     if len(opnds) > 0:
                         solver.add(Or(opnds))
 
@@ -971,7 +972,7 @@ def create_bool_func(func):
 
 
 class TestBase:
-    def __init__(self, maxlen=10, debug=0, stats=False, graph=False, tests=None, write=None):
+    def __init__(self, maxlen=10, debug=10, stats=False, graph=False, tests=None, write=None):
         self.debug = debug
         self.max_length = maxlen
         self.write_stats = stats
@@ -1157,7 +1158,7 @@ class Tests(TestBase):
 def parse_standard_args():
     import argparse
     parser = argparse.ArgumentParser(prog="synth")
-    parser.add_argument('-d', '--debug', type=int, default=0)
+    parser.add_argument('-d', '--debug', type=int, default=10)
     parser.add_argument('-m', '--maxlen', type=int, default=10)
     parser.add_argument('-s', '--stats', default=False, action='store_true')
     parser.add_argument('-g', '--graph', default=False, action='store_true')
