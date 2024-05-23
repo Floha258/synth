@@ -14,6 +14,8 @@ from functools import cached_property, lru_cache
 from contextlib import contextmanager
 
 from pysmt.environment import push_env, Environment
+from pysmt.fnode import FNode
+from pysmt.formula import FormulaManager
 from pysmt.shortcuts import *
 from pysmt.typing import *
 
@@ -43,8 +45,8 @@ def _collect_vars(expr):
 
 
 class Spec:
-    def __init__(self, name: str, phis, outputs,
-                 inputs, preconds: list[BOOL] = None):  # TODO Check z3 code
+    def __init__(self, name: str, phis: list[FNode], outputs: list[FNode],
+                 inputs: list[FNode], preconds: list[BOOL] = None):  # TODO Check z3 code
         """
         Create a specification.
 
@@ -143,16 +145,20 @@ class Spec:
         solver.add_assertion(Or([Not(EqualsOrIff(a, b)) for a, b in zip(self.outputs, outs)]))
         return not solver.solve()  # unsat
 
-    def instantiate(self, outs, ins):
-        self_outs = self.outputs
-        self_ins = self.inputs
+    def instantiate(self, outs: list[FNode], ins: list[FNode]):
+        self_outs: list[FNode] = self.outputs
+        self_ins: list[FNode] = self.inputs
         assert len(outs) == len(self_outs)
         assert len(ins) == len(self_ins)
         # assert all(x.ctx == y.ctx for x, y in zip(self_outs + self_ins, outs + ins))
         # [substitute(phi, list(zip(self_outs + self_ins, outs + ins))) for phi in self.phis]
-        phis = []
+        phis: list[FNode] = []
+        self_outs_ins = []
         for phi in self.phis:
-            phis.append(phi.substitute(dict(zip(self_outs + self_ins, outs + ins))))
+            manager: FormulaManager = get_env().formula_manager
+            for node in (self_outs + self_ins):
+                self_outs_ins.append(manager.normalize(node))
+            phis.append(phi.substitute(dict(zip(self_outs_ins, outs + ins))))
         pres = []
         for p in self.preconds:
             pres.append(p.substitute(dict(zip(self_ins, ins))))
