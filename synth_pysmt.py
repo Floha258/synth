@@ -13,11 +13,12 @@ from functools import cached_property, lru_cache
 
 from contextlib import contextmanager
 
-from pysmt.environment import push_env, Environment
+from pysmt.environment import push_env, Environment, pop_env
 from pysmt.fnode import FNode
 from pysmt.formula import FormulaManager
 from pysmt.shortcuts import *
 from pysmt.typing import *
+from pysmt.solvers.solver import Model
 
 solverName = 'z3'
 
@@ -146,6 +147,10 @@ class Spec:
         return not solver.solve()  # unsat
 
     def instantiate(self, outs: list[FNode], ins: list[FNode]):
+        pop_env()
+        pop_env()
+        pop_env()
+        pop_env()
         self_outs: list[FNode] = self.outputs
         self_ins: list[FNode] = self.inputs
         assert len(outs) == len(self_outs)
@@ -154,14 +159,21 @@ class Spec:
         # [substitute(phi, list(zip(self_outs + self_ins, outs + ins))) for phi in self.phis]
         phis: list[FNode] = []
         self_outs_ins = []
+        manager: FormulaManager = get_env().formula_manager
+        for node in (self_outs + self_ins):
+            self_outs_ins.append(manager.normalize(node))
+        outs_ins = []
+        for node in (outs + ins):
+            outs_ins.append(manager.normalize(node))
         for phi in self.phis:
-            manager: FormulaManager = get_env().formula_manager
-            for node in (self_outs + self_ins):
-                self_outs_ins.append(manager.normalize(node))
-            phis.append(phi.substitute(dict(zip(self_outs_ins, outs + ins))))
+            phis.append(phi.substitute(dict(zip(self_outs_ins, outs_ins))))
         pres = []
         for p in self.preconds:
-            pres.append(p.substitute(dict(zip(self_ins, ins))))
+            pres.append(p.substitute(dict(zip(self_ins, outs_ins[0:(len(ins) - 1)]))))
+        push_env()
+        push_env()
+        push_env()
+        push_env()
         return pres, phis
 
 
@@ -301,11 +313,11 @@ class Prg:
 
 
 class EnumBase:
-    def __init__(self, items, cons):
+    def __init__(self, items: list, cons: list[FNode]):
         assert len(items) == len(cons)
         self.cons = cons
         self.item_to_cons = {i: con for i, con in zip(items, cons)}
-        self.cons_to_item = {con: i for i, con in zip(items, cons)}
+        self.cons_to_item = {con.bv2nat(): i for (i, con) in zip(items, cons)}
 
     def __len__(self):
         return len(self.cons)
@@ -329,6 +341,24 @@ class EnumSortEnum(EnumBase):
 
     def add_range_constr(self, solver, var):
         pass
+
+    def translate_enum(self):
+        env: Environment = get_env()
+        cons_translation: dict[FNode, FNode] = {}
+        translated_cons: list[FNode] = []
+        # translate cons
+        for con in self.cons:
+            translated_con = env.formula_manager.normalize(con)
+            cons_translation[con] = translated_con
+            translated_cons.append(translated_con)
+        # put translated cons in cons_to_items and items_to_cons
+        for con in self.cons_to_item.keys():
+            item = self.cons_to_item[con]
+            del self.cons_to_item[con]
+            translated_con = cons_translation[con]
+            self.cons_to_item[translated_con] = item
+            self.item_to_cons[item] = translated_con
+        self.cons = translated_cons
 
 
 def _bv_sort(n):
@@ -479,7 +509,7 @@ class SpecWithSolver:
         verif = self.verif
 
         @lru_cache
-        def get_var(ty, name):
+        def get_var(ty, name: str) -> FNode:
             # assert ty.ctx == ctx
             return Symbol(name, ty)
 
@@ -669,7 +699,7 @@ class SpecWithSolver:
                     res = var_insn_res(insn, op.out_type, instance)
                     opnds = list(var_insn_opnds_val(insn, op.in_types, instance))
                     [precond], [phi] = op.instantiate([res], opnds)
-                    solver.add_assertion(Implies(op_var == op_id, And([precond, phi])))
+                    solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), And([precond, phi])))
                 # connect values of operands to values of corresponding results
                 for op in ops:
                     add_constr_conn(solver, insn, op.in_types, instance)
@@ -698,13 +728,13 @@ class SpecWithSolver:
             for pre, phi in zip(preconds, phis):
                 solver.add(Implies(pre, phi))
 
-        def add_constr_sol_for_verif(model):
+        def add_constr_sol_for_verif(model: Model):
             for insn in range(length):
                 if is_op_insn(insn):
                     v = var_insn_op(insn)
-                    verif.add(model[v] == v)
-                    val = model.evaluate(v, model_completion=True)
-                    op = self.op_enum.get_from_model_val(val)
+                    verif.add_assertion(EqualsOrIff(model[v], v))
+                    val = model.get_value(v, model_completion=True)
+                    op = self.op_enum.get_from_model_val(val.bv2nat())
                     tys = op.in_types
                 else:
                     tys = out_tys
@@ -728,7 +758,7 @@ class SpecWithSolver:
             for v, e in zip(verif_outs, eval_outs):
                 verif.add_assertion(EqualsOrIff(v, e))
 
-        def create_prg(model):
+        def create_prg(model: Model):
             def prep_opnds(insn, tys):
                 for _, opnd, v, c, cv in iter_opnd_info(insn, tys, 'verif'):
                     is_const = (model[c] == TRUE()) if not model[c] is None else False
@@ -736,8 +766,9 @@ class SpecWithSolver:
 
             insns = []
             for insn in range(n_inputs, length - 1):
-                val = model.evaluate(var_insn_op(insn), model_completion=True)
-                op = self.op_enum.get_from_model_val(val)
+                val: FNode = model.get_value(var_insn_op(insn), model_completion=True)
+                # self.op_enum.translate_enum()
+                op = self.op_enum.get_from_model_val(val.bv2nat())
                 opnds = [v for v in prep_opnds(insn, op.in_types)]
                 insns += [(op, opnds)]
             outputs = [v for v in prep_opnds(out_insn, out_tys)]
