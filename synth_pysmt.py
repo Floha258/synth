@@ -734,7 +734,8 @@ class SpecWithSolver:
                     v = var_insn_op(insn)
                     verif.add_assertion(EqualsOrIff(model[v], v))
                     val = model.get_value(v, model_completion=True)
-                    op = self.op_enum.get_from_model_val(val.bv2nat())
+                    # TODO: Off by 1?
+                    op = self.op_enum.get_from_model_val(val.bv2nat() - 1)
                     tys = op.in_types
                 else:
                     tys = out_tys
@@ -768,14 +769,15 @@ class SpecWithSolver:
             for insn in range(n_inputs, length - 1):
                 val: FNode = model.get_value(var_insn_op(insn), model_completion=True)
                 # self.op_enum.translate_enum()
-                op = self.op_enum.get_from_model_val(val.bv2nat())
+                # TODO: For whatever reason the value I'm getting from the model is off, possible off by 1 error?
+                op = self.op_enum.get_from_model_val(val.bv2nat() - 1)
                 opnds = [v for v in prep_opnds(insn, op.in_types)]
                 insns += [(op, opnds)]
             outputs = [v for v in prep_opnds(out_insn, out_tys)]
             input_names = [str(v) for v in spec.inputs]
             return Prg(input_names, insns, outputs)
 
-        def write_smt2(solver, *args):
+        def write_smt2(solver: Solver, *args):
             if not output_prefix is None:
                 filename = f'{output_prefix}_{"_".join(str(a) for a in args)}.smt2'
                 with open(filename, 'w') as f:
