@@ -27,20 +27,22 @@ You need Z3 and the [z3-solver](https://pypi.org/project/z3-solver/) package for
 
 The package provides the function
 ```Python
-def synth(spec: Spec, ops: list[Func], range, **args):
+def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
 ```
 which does the actual synthesis.
 
 - The first argument `spec` is the specification of the program to synthesize.
 - `ops` is the library of operators it can use.
 - `range` is the range of program sizes to try.
+- `n_samples` number of initial I/O samples to draw.
 - `args` are additional options given to the core synthesis routine `synth_n` (see code).
 
 The function returns a pair of the synthesized program (or `None`) and statistics information about the synthesis process.
 
 The following example shows how to synthesize a 1-bit full adder:
 ```Python
-from synth import Func, Spec, synth
+from cegis import Func, Spec
+from synth_n import synth
 from z3 import *
 
 r, x, y := Bools('r x y')
@@ -52,12 +54,14 @@ nand2 = Func('nand2', Not(And([x, y])), [x, y])
 # The specification for the program to synthesize is an object of class Spec
 # A Spec is given by a name, a list of input/output relations,
 # and two lists that give that specify the output and input variables.
-spec  = Spec('and', [ r == And([x, y]) ] , [r], [x, y])
+spec  = Spec('and', r == And([x, y]), [r], [x, y])
 
 # Synthesize a program of at most 9 instructions and print it if it exists
 prg, stats = synth(spec, [ nand2 ], range(10))
 if prg:
     print(prg)
+else:
+   print('No program of length 10 found')
 ```
 
 ### Notes
@@ -73,21 +77,21 @@ if prg:
   ```
   is shorthand for
   ```
-  Spec(name, [ r == phi ], [ r ], ins)
+  Spec(name, r == phi, [ r ], ins)
   ```
-  where `r` does not appear in `ins`
+  where `r` does not appear in `ins` and `ins` are the free variables in `phi`.
 
 ## Synthesis of Boolean Functions
 
-`synth_bf` synthesizes boolean functions. It has three modes of operation:
+`boolfunc` synthesizes boolean functions. It has three modes of operation:
 1. Pass function values as hex numbers via the command line:
    ```
-   ./synth_bf.py 0b00010010 1234 0xabcd1234
+   ./boolfunc.py 0b00010010 1234 0xabcd1234
    ```
    synthesizes 3-input function 0x12, 4-input function 0x1234, and 5-input function 0xabcd1234
 2. Read in function values from a file
    ```
-   ./synth_bf.py -f funcs.txt
+   ./boolfunc.py -f funcs.txt
    ```
    where `funcs.txt` contains function values of each function per line, i.e.
    ```
@@ -95,7 +99,7 @@ if prg:
    1234
    0xabcd1234
    ```
-3. Read in an [Espresso](https://ptolemy.berkeley.edu/projects/embedded/pubs/downloads/espresso/index.htm) PLA description of the form
+3. Read in an [Espresso](https://raw.githubusercontent.com/JackHack96/logic-synthesis/espresso/doc/espresso5.pdf) PLA description of the form
    ```
    .i 3
    .o 2
@@ -112,4 +116,8 @@ if prg:
    Don't care entries (`-`) in input and output are supported (see `pla/dontcare.pla`).
    Use with parameter `-a`, for example: `./synth_bf.py -a pla/add.pla`
 
-See `./synth_bf.py -h` for more options.
+See `./boolfunc.py -h` for more options.
+
+## Hacker's Delight Benchmarks
+
+`hackdel.py` provides benchmarks 1-24 from the [Brahma paper](https://susmitjha.github.io/papers/pldi11.pdf).
