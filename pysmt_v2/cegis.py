@@ -405,7 +405,7 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
 
     # set up the verification constraint
     verif = Solver(name=solverName)
-    verif.add_assertions(Or([And([pre, Not(phi)]) for pre, phi in zip(spec.preconds, spec.phis)]))
+    verif.add_assertion(Or([And([pre, Not(phi)]) for pre, phi in zip(spec.preconds, spec.phis)]))
 
     stats = []
     i = 0

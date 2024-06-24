@@ -353,7 +353,8 @@ class SynthN:
         # no dead code: each produced value is used
         if opt_no_dead_code:
             for prod in range(self.n_inputs, self.length):
-                opnds = [EqualsOrIff(prod, v) for cons in range(prod + 1, self.length) for v in self.var_insn_opnds(cons)]
+                opnds = [EqualsOrIff(prod, v) for cons in range(prod + 1, self.length) for v in
+                         self.var_insn_opnds(cons)]
 
                 if len(opnds) > 0:
                     solver.add_assertion(Or(opnds))
@@ -372,7 +373,8 @@ class SynthN:
                 for other in range(insn):
                     r = self.var_insn_res(other, ty, instance)
                     # ... the operand is equal to the result of the instruction
-                    solver.add_assertion(Implies(Not(c), Implies(EqualsOrIff(l, other), EqualsOrIff(v, r))))
+                    solver.add_assertion(
+                        Implies(Not(c), Implies(EqualsOrIff(l, BV(other, l.bv_width())), EqualsOrIff(v, r))))
 
         def add_constr_instance(solver: Solver, instance):
             # for all instructions that get an op
@@ -508,9 +510,7 @@ def synth(spec: Spec, ops: list[Func], iter_range, n_samples=1, **args):
             synthesizer = SynthN(spec, ops, n_insns, **args)
             prg, stats = cegis(spec, synthesizer, init_samples=init_samples, \
                                debug=synthesizer.d)
-            all_stats += [ { 'time': elapsed(), 'iterations': stats } ]
+            all_stats += [{'time': elapsed(), 'iterations': stats}]
             if not prg is None:
                 return prg, all_stats
     return None, all_stats
-
-
