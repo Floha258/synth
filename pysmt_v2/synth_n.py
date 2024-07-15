@@ -70,7 +70,7 @@ class BitVecEnum(EnumBase):
         super().__init__(items, {i for i, _ in enumerate(items)})
 
     def get_from_model_val(self, val):
-        return self.cons_to_item[val.as_long()]
+        return self.cons_to_item[val.bv2nat()]
 
     def add_range_constr(self, solver, var):
         solver.add(BVULE(var, len(self.item_to_cons) - 1))  # Should be unsigned
@@ -135,7 +135,7 @@ class SynthN:
         # get the sorts for the variables used in synthesis
         self.ty_sort = self.ty_enum.sort
         self.op_sort = self.op_enum.sort
-        self.ln_sort = _bv_sort(self.length - 1)
+        self.ln_sort = _bv_sort(self.length) # TODO was lenth - 1, why?
         self.bl_sort = BOOL
 
         # set options
@@ -322,12 +322,13 @@ class SynthN:
         for insn in range(self.n_inputs, self.out_insn):
             op_var = self.var_insn_op(insn)
             for op, op_id in self.op_enum.item_to_cons.items():
+                op_id_bv = BV(op_id, op_var.bv_width())
                 # if operator is commutative, force the operands to be in ascending order
                 if opt_commutative and op.is_commutative:
                     opnds = list(self.var_insn_opnds(insn))
                     c = [BVULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
                     # TODO: This was somehow not equals prior? Also requires ctx in og
-                    solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), And(c)))
+                    solver.add_assertion(Implies(EqualsOrIff(op_var, op_id_bv), And(c)))
 
                 if opt_const:
                     vars = [v for v in self.var_insn_opnds_is_const(insn)][:op.arity]
@@ -336,10 +337,10 @@ class SynthN:
                         # Binary commutative operators have at most one constant operand
                         # Hence, we pin the first operand to me non-constant
                         false = FALSE()
-                        solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), EqualsOrIff(vars[0], false)))
+                        solver.add_assertion(Implies(EqualsOrIff(op_var, op_id_bv), EqualsOrIff(vars[0], false)))
                     else:
                         # Otherwise, we require that at least one operand is non-constant
-                        solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), Not(And(vars))))
+                        solver.add_assertion(Implies(EqualsOrIff(op_var, op_id_bv), Not(And(vars))))
 
             # Computations must not be replicated: If an operation appears again
             # in the program, at least one of the operands must be different from
@@ -353,7 +354,7 @@ class SynthN:
         # no dead code: each produced value is used
         if opt_no_dead_code:
             for prod in range(self.n_inputs, self.length):
-                opnds = [EqualsOrIff(prod, v) for cons in range(prod + 1, self.length) for v in
+                opnds = [EqualsOrIff(BV(prod, v.bv_width()), v) for cons in range(prod + 1, self.length) for v in
                          self.var_insn_opnds(cons)]
 
                 if len(opnds) > 0:
@@ -382,10 +383,11 @@ class SynthN:
                 # add constraints to select the proper operation
                 op_var = self.var_insn_op(insn)
                 for op, op_id in self.op_enum.item_to_cons.items():
+                    op_id_bv = BV(op_id, op_var.bv_width())
                     res = self.var_insn_res(insn, op.out_type, instance)
                     opnds = list(self.var_insn_opnds_val(insn, op.in_types, instance))
                     [precond], [phi] = op.instantiate([res], opnds)
-                    solver.add_assertion(Implies(EqualsOrIff(op_var, op_id), And([precond, phi])))
+                    solver.add_assertion(Implies(EqualsOrIff(op_var, op_id_bv), And([precond, phi])))
                 # connect values of operands to values of corresponding results
                 for op in ops:
                     add_constr_conn(solver, insn, op.in_types, instance)

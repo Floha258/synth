@@ -8,7 +8,7 @@ from itertools import permutations as perm
 from pysmt.environment import push_env, pop_env
 from pysmt.fnode import FNode
 from pysmt.formula import FormulaManager
-from pysmt.shortcuts import EqualsOrIff, Or, Not, get_env, TRUE, FreshSymbol, And, NotEquals, Solver
+from pysmt.shortcuts import EqualsOrIff, Or, Not, get_env, TRUE, FreshSymbol, And, NotEquals, Solver, Symbol, FALSE
 from pysmt.typing import BOOL
 
 solverName = 'z3'
@@ -311,12 +311,12 @@ class Prg:
             return v if is_const else vars[v]
 
         for i, (insn, opnds) in enumerate(self.insns):
-            subst = [(i, get_val(p)) \
-                     for i, p in zip(insn.inputs, opnds)]
-            res = FreshSymbol(self.var_name(i + n_inputs), insn.func.get_type())
+            subst = {}
+            for j, p in zip(insn.inputs, opnds):
+                subst[j] = get_val(p)
+            res = Symbol(self.var_name(i + n_inputs), insn.func.get_type())
             vars.append(res)
-            substituter = get_env().substituter
-            yield res == substituter.substitute(dict(zip(insn.func, subst)))
+            yield res == insn.func.substitute(subst)
         for o, p in zip(spec.outputs, self.outputs):
             yield o == get_val(p)
 
@@ -437,7 +437,10 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
             # and add equalities that evaluate the program
             verif.push()
             for c in prg.eval_clauses():
-                verif.add_assertion(c)
+                c_smt = TRUE()
+                if not c:
+                    c_smt = FALSE()
+                verif.add_assertion(c_smt)
 
             d(5, 'verif', samples_str, verif)
             with timer() as elapsed:
