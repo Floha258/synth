@@ -420,10 +420,10 @@ class SynthN:
                     if model[c].is_true():
                         assert not model[c] is None
                         manager = get_env().formula_manager
-                        yield (True, manager.normalize(model[cv]))
+                        yield True, manager.normalize(model[cv])
                     else:
                         # TODO: Search up as long equivalent in pysmt
-                        yield (False, model[opnd].as_long())
+                        yield False, model[opnd].bv2nat()
 
             insns = []
             for insn in range(self.n_inputs, self.length - 1):

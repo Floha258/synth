@@ -14,9 +14,8 @@ from pysmt.typing import BOOL
 solverName = 'z3'
 
 
-def _eval_model(solver: Solver, vars):
-    m = solver.get_model()
-    return [m.get_value(v, model_completion=True) for v in vars]
+def _eval_model(model, vars):
+    return [model.get_value(v) for v in vars]
 
 
 class Eval:
@@ -152,13 +151,13 @@ class Spec:
 
     @cached_property
     def is_total(self):
-        solver = Solver(environment=self.env, name=solverName)
+        solver = Solver(name=solverName)
         solver.add_assertion(Or([Not(p) for p in self.preconds]))
         return not solver.solve()
 
     @cached_property
     def is_deterministic(self):
-        solver = Solver(environment=self.env, name=solverName)
+        solver = Solver(name=solverName)
         ins = [FreshSymbol(ty) for ty in self.in_types]
         outs = [FreshSymbol(ty) for ty in self.out_types]
         _, phis = self.instantiate(outs, ins)
