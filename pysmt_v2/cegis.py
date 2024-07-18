@@ -254,7 +254,7 @@ class Func(Spec):
         substituter = env.substituter
         subst = lambda f, i: substituter.substitute(f, dict(zip(ins, i)))
         fs = [And([subst(precond, a), subst(precond, b), \
-                   NotEquals(subst(func, a), subst(func, b))]) \
+                   Not(EqualsOrIff(subst(func, a), subst(func, b)))]) \
               for a, b in comb(perm(ins), 2)]
         s = Solver(name=solverName)
         s.add_assertion(Or(fs))  # missing context

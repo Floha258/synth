@@ -238,11 +238,13 @@ class SynthN:
         for insn in range(self.n_inputs, self.length - 1):
             opnds = list(self.var_insn_opnds(insn))
             for op, op_id in self.op_enum.item_to_cons.items():
+                print('OP: ', op, 'OP ID ', op_id)
+                op_id_bv = BV(op_id, self.op_enum.sort.width)
                 unused = opnds[op.arity:]
                 for opnd in unused:
                     # TODO: Probably replace infix with prefix
-                    solver.add_assertion(Implies(self.var_insn_op(insn) == op_id, \
-                                                 opnd == opnds[op.arity - 1]))
+                    solver.add_assertion(Implies(EqualsOrIff(self.var_insn_op(insn), op_id_bv), \
+                                                 EqualsOrIff(opnd, opnds[op.arity - 1])))
 
         # Add a constraint for the maximum amount of constants if specified.
         # The output instruction is exempt because we need to be able

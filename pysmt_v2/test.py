@@ -88,6 +88,13 @@ def create_bool_func(func):
     return Func(func, Or(clauses) if len(clauses) > 0 else And(vars[0], Not(vars[0])))
 
 
+def at_least(x, y, z, n=2):
+    if n == 2:
+        return Or(And(x, y), And(x, z), And(y, z))
+    else:
+        raise NotImplementedError
+
+
 class TestBase:
     def __init__(self, maxlen=10, debug=0, stats=False, graph=False, \
                 tests=None, write=None, check=0):
@@ -140,7 +147,7 @@ class Tests(TestBase):
     def random_test(self, name, n_vars, create_formula):
         ops = [Bl.and2, Bl.or2, Bl.xor2, Bl.not1]
         spec = Func('rand', create_formula([Bool(f'x{i}') for i in range(n_vars)]))
-        return self.do_synth(name, spec, ops, max_const=0, theory='QF_FD')
+        return self.do_synth(name, spec, ops, max_const=0, theory='QF_AUFBV')
 
     def test_rand(self, size=40, n_vars=4):
         ops = [(And, 2), (Or, 2), (Xor, 2), (Not, 1)]
@@ -157,7 +164,7 @@ class Tests(TestBase):
         spec = create_bool_func(name)
         return self.do_synth(f'npn4_{name}', spec, ops, \
                              max_const=0, n_samples=16, \
-                             reset_solver=True, theory='QF_FD')
+                             reset_solver=True, theory='QF_AUFBV')
 
     def test_and(self):
         ops = {Bl.nand2: 2}
@@ -175,7 +182,7 @@ class Tests(TestBase):
         spec = Func('zero', Not(Or([Bool(f'x{i}') for i in range(8)])))
         ops = {Bl.and2: 1, Bl.nand2: 0, Bl.or2: 0, Bl.nor2: 0, Bl.nand3: 0, \
                Bl.nor3: 0, Bl.nand4: 0, Bl.nor4: 2}
-        return self.do_synth('zero', spec, ops, max_const=0, theory='QF_FD')
+        return self.do_synth('zero', spec, ops, max_const=0, theory='QF_AUFBV')
 
     def test_add(self):
         x = Symbol('x', BOOL)
@@ -187,14 +194,14 @@ class Tests(TestBase):
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops = {Bl.not1: 0, Bl.xor2: 2, Bl.and2: 2, Bl.nand2: 0, Bl.or2: 1, Bl.nor2: 0}
         return self.do_synth('add', spec, ops,
-                             desc='1-bit full adder', theory='QF_FD')
+                             desc='1-bit full adder', theory='QF_AUFBV')
 
     def test_add_apollo(self):
         x, y, ci, s, co = Bools('x y ci s co')
         add = And([co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))])
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, {Bl.nor3: 8}, \
-                             desc='1-bit full adder (nor3)', theory='QF_FD')
+                             desc='1-bit full adder (nor3)', theory='QF_AUFBV')
 
     def test_identity(self):
         spec = Func('magic', And(Or(Bool('x'))))
