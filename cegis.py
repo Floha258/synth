@@ -1,5 +1,7 @@
 import time
 
+from smtlib import SupportedSolvers, solve_smtlib, extract_model
+
 from itertools import combinations as comb
 from itertools import permutations as perm
 from contextlib import contextmanager
@@ -10,22 +12,42 @@ from z3 import *
 class OpFreq:
     MAX = 1000000000
 
-def _eval_model(model, vars):
-    return [ model.evaluate(v, model_completion=True) for v in vars ]
+def _eval_model(model: list[str], vars):
+    m = extract_model(model)
+    type, width, value = [ m[str(v)] for v in vars ]
+    if type == 'BitVec':
+        return int(value.split('#b')[1], 2)
+    else:
+        return value == 'true'
 
 class Eval:
-    def __init__(self, inputs, outputs, solver):
+    def __init__(self, inputs, outputs, solver, name):
         self.inputs = inputs
         self.outputs = outputs
         self.solver = solver
+        self.name = name
+
+    def write_smt2(self, filename: str, solver):
+        s = solver
+        if not type(s) is Solver:
+            s = Solver(ctx=ctx)
+            s.add(solver)
+        if filename:
+            with open(filename, 'w') as f:
+                print(s.to_smt2(), file=f)
+                print('(get-model)', file=f)
 
     def __call__(self, input_vals):
         s = self.solver
         s.push()
         for var, val in zip(self.inputs, input_vals):
             s.add(var == val)
-        assert s.check() == sat
-        res = _eval_model(s.model(), self.outputs)
+        # assert s.check() == sat
+        filename = f'{self.name}_eval_{"_".join(str(i) for i in self.inputs)}.smt2'
+        self.write_smt2(filename, self.solver)
+        solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
+        assert solvable
+        res = _eval_model(model, self.outputs)
         s.pop()
         return res
 
@@ -39,9 +61,12 @@ class Eval:
         res = []
         s = self.solver
         s.push()
-        for _ in range(n):
-            if s.check() == sat:
-                ins  = _eval_model(s.model(), self.inputs)
+        for i in range(n):
+            filename = f'{self.name}_sample_{i}.smt2'
+            self.write_smt2(filename, s)
+            solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
+            if solvable:
+                ins  = _eval_model(model, self.inputs)
                 res += [ ins ]
                 s.add(Or([ v != iv for v, iv in zip(self.inputs, ins) ]))
             else:
@@ -121,7 +146,7 @@ class Spec:
         s = Solver(ctx=self.ctx)
         s.add(self.precond)
         s.add(self.phi)
-        return Eval(self.inputs, self.outputs, s)
+        return Eval(self.inputs, self.outputs, s, self.name)
 
     @cached_property
     def out_types(self):
@@ -276,6 +301,8 @@ class Prg:
                       for i, p in zip(insn.inputs, opnds) ]
             res = Const(self.var_name(i + n_inputs), insn.func.sort())
             vars.append(res)
+            # print('Subst:')
+            # print(subst)
             yield res == substitute(insn.func, subst)
         for o, p in zip(spec.outputs, self.outputs):
             yield o == get_val(p)
@@ -320,7 +347,7 @@ class Prg:
 
         save_stdout, sys.stdout = sys.stdout, file
         n_inputs = len(self.input_names)
-        print(f"""digraph G {{
+        print(f"""digraph G {{3
   rankdir=BT
   {{
     rank = same;
@@ -394,17 +421,26 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
             for c in prg.eval_clauses():
                 verif.add(c)
 
+            def write_smt2(filename: str):
+                s = verif
+                if not type(s) is Solver:
+                    s = Solver(ctx=ctx)
+                    s.add(verif)
+                if spec.name:
+                    with open(filename, 'w') as f:
+                        print(s.to_smt2(), file=f)
+                        print('(get-model)', file=f)
+
+            filename = f'{spec.name}_verif_{samples_str}.smt2'
+            write_smt2(filename)
             d(3, 'verif', samples_str, verif)
-            with timer() as elapsed:
-                res = verif.check()
-                verif_time = elapsed()
+            res, verif_time, model = solve_smtlib(filename, SupportedSolvers.CVC)
             stat['verif_time'] = verif_time
             d(2, f'verif time {verif_time / 1e9:.3f}')
 
-            if res == sat:
+            if res:
                 # there is a counterexample, reiterate
-                m = verif.model()
-                samples = [ _eval_model(m, spec.inputs) ]
+                samples = [ _eval_model(model, spec.inputs) ]
                 d(4, 'verification model', m)
                 d(4, 'verif sample', samples[0])
                 verif.pop()
