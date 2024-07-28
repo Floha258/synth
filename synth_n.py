@@ -3,7 +3,8 @@ from collections import defaultdict
 
 from z3 import *
 
-from cegis import Spec, Func, Prg, OpFreq, no_debug, timer, cegis
+from cegis import Prg, OpFreq, no_debug, timer, cegis
+from spec import Spec, Func
 from util import bv_sort
 
 class EnumBase:
@@ -376,6 +377,7 @@ class SynthN:
             self.synth.add(res == val)
         for out, val in zip(self.var_outs_val(instance), out_vals):
             assert not val is None
+            val = val.translate(out.ctx)
             self.synth.add(out == val)
 
     def add_constr_io_spec(self, instance, in_vals):
@@ -408,7 +410,7 @@ class SynthN:
 
     def synth_with_new_samples(self, samples):
         ctx       = self.ctx
-        samples   = [ [ v.translate(ctx) for v in s ] for s in samples ]
+        samples_translated   = [[v.translate(ctx) for v in s] for s in samples]
 
         def write_smt2(*args):
             s = self.synth
@@ -422,7 +424,7 @@ class SynthN:
 
         # main synthesis algorithm.
         # 1) set up counter examples
-        for sample in samples:
+        for sample in samples_translated:
             # add a new instance of the specification for each sample
             self.add_constr_instance(self.n_samples)
             if self.spec.is_deterministic and self.spec.is_total:

@@ -1,10 +1,8 @@
 #! /usr/bin/env python3
 
-import math
-
-from z3 import *
 from cegis import *
 from oplib import Bv
+from spec import Spec, Func
 from test import TestBase, parse_standard_args
 
 class BvBench(TestBase):

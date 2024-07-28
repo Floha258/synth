@@ -1,5 +1,5 @@
 from z3 import *
-from cegis import Func
+from spec import Func
 
 class Bl:
     w, x, y, z = Bools('w x y z')

@@ -40,8 +40,10 @@ which does the actual synthesis.
 The function returns a pair of the synthesized program (or `None`) and statistics information about the synthesis process.
 
 The following example shows how to synthesize a 1-bit full adder:
+
 ```Python
-from cegis import Func, Spec
+
+from spec import Spec, Func
 from synth_n import synth
 from z3 import *
 
@@ -54,14 +56,14 @@ nand2 = Func('nand2', Not(And([x, y])), [x, y])
 # The specification for the program to synthesize is an object of class Spec
 # A Spec is given by a name, a list of input/output relations,
 # and two lists that give that specify the output and input variables.
-spec  = Spec('and', r == And([x, y]), [r], [x, y])
+spec = Spec('and', r == And([x, y]), [r], [x, y])
 
 # Synthesize a program of at most 9 instructions and print it if it exists
-prg, stats = synth(spec, [ nand2 ], range(10))
+prg, stats = synth(spec, [nand2], range(10))
 if prg:
     print(prg)
 else:
-   print('No program of length 10 found')
+    print('No program of length 10 found')
 ```
 
 ### Notes

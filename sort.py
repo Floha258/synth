@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
-from z3 import *
 from cegis import *
+from spec import Spec, Func
 from util import bv_sort
 from test import TestBase, parse_standard_args
 

@@ -4,7 +4,8 @@ import importlib
 
 from z3 import *
 
-from cegis import Spec, Func, OpFreq
+from cegis import OpFreq
+from spec import Spec, Func
 from oplib import Bl
 from test import create_bool_func
 

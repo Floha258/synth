@@ -6,7 +6,8 @@ import itertools
 import json
 import re
 
-from cegis import Func, Spec, OpFreq
+from cegis import OpFreq
+from spec import Spec, Func
 from oplib import Bl
 
 from z3 import *

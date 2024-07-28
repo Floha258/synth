@@ -5,7 +5,8 @@ from synth_n import SynthN
 
 from z3 import *
 
-from cegis import Spec, Func, Prg, OpFreq, no_debug, timer
+from cegis import Prg, OpFreq, no_debug, timer
+from spec import Spec, Func
 from util import bv_sort
 
 class SynthFA(SynthN):

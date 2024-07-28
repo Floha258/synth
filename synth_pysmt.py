@@ -80,7 +80,7 @@ class Spec:
             'number of outputs must match number of specifications'
         assert preconds is None or len(preconds) == len(outputs), \
             'number of preconditions must match'
-        # self.ctx = phis[0].ctx
+        self.env = get_env()
         self.name = name
         self.arity = len(inputs)
         self.inputs = inputs
@@ -866,6 +866,7 @@ class SpecWithSolver:
                     samples = [_eval_model(self.verif, self.inputs)]
                     d(4, 'verification model', verif.get_model())
                     d(4, 'verif sample', samples[0])
+                    d(1, 'samples', samples)
                     verif.pop()
                 else:
                     verif.pop()
@@ -944,8 +945,8 @@ class Bv:
         self.width = width
         self.ty = BVType(width)
 
-        x = Symbol('x', BVType())
-        y = Symbol('y', BVType())
+        x = Symbol('x', BVType(width))
+        y = Symbol('y', BVType(width))
         shift_precond = And([y >= 0, y < width])
         div_precond = y != 0
         z = BV(0, width)
@@ -1218,7 +1219,7 @@ class Tests(TestBase):
         ops = [
             Func('sub', x - y),
             Func('xor', x ^ y),
-            Func('shr', x >> y, precond=And([BVSGE(y, BV(0, w)), BVSLE(y, BV(w, w))]))
+            Func('shr', x >> y, precond=And([BVSGE(y, BV(0, w)), BVSLT(y, BV(w, w))]))
         ]
         spec = Func('spec', Ite(BVSGE(x, BV(0, w)), x, BVNeg(x)))
         return self.do_synth('abs', spec, ops, theory='QF_AUFBV')

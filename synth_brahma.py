@@ -3,7 +3,8 @@ from itertools import chain, combinations_with_replacement
 
 from z3 import *
 
-from cegis import Spec, Func, Prg, OpFreq, no_debug, timer, cegis
+from cegis import Prg, OpFreq, no_debug, timer, cegis
+from spec import Spec, Func
 from oplib import Bl
 from util import bv_sort
 
