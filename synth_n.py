@@ -4,6 +4,7 @@ from collections import defaultdict
 from z3 import *
 
 from cegis import Prg, OpFreq, no_debug, timer, cegis
+from smtlib import solve_smtlib, SupportedSolvers, _eval_model
 from spec import Spec, Func
 from util import bv_sort
 
@@ -12,7 +13,7 @@ class EnumBase:
         assert len(items) == len(cons)
         self.cons = cons
         self.item_to_cons = { i: con for i, con in zip(items, cons) }
-        self.cons_to_item = { con: i for i, con in zip(items, cons) }
+        self.cons_to_item = { str(con): i for i, con in zip(items, cons) }
 
     def __len__(self):
         return len(self.cons)
@@ -29,7 +30,8 @@ class EnumSortEnum(EnumBase):
         super().__init__(items, cons)
 
     def get_from_model_val(self, val):
-        return self.cons_to_item[val]
+        # val is a list for whatever reason
+        return self.cons_to_item[val[0]]
 
     def add_range_constr(self, solver, var):
         pass
@@ -47,10 +49,10 @@ class BitVecEnum(EnumBase):
 
 class SynthN:
     def __init__(self, spec: Spec, ops: list[Func], n_insns, \
-        debug=no_debug, timeout=None, max_const=None, const_set=None, \
-        output_prefix=None, theory=None, reset_solver=True, \
-        opt_no_dead_code=True, opt_no_cse=True, opt_const=True, \
-        opt_commutative=True, opt_insn_order=True):
+                 debug=no_debug, timeout=None, max_const=None, const_set=None, \
+                 output_prefix=None, theory=None, reset_solver=True, \
+                 opt_no_dead_code=True, opt_no_cse=True, opt_const=True, \
+                 opt_commutative=True, opt_insn_order=True):
 
         """Synthesize a program that computes the given functions.
 
@@ -377,7 +379,8 @@ class SynthN:
             self.synth.add(res == val)
         for out, val in zip(self.var_outs_val(instance), out_vals):
             assert not val is None
-            val = val.translate(out.ctx)
+            if not val.ctx == out.ctx:
+                val = val.translate(out.ctx)
             self.synth.add(out == val)
 
     def add_constr_io_spec(self, instance, in_vals):
@@ -393,15 +396,19 @@ class SynthN:
     def create_prg(self, model):
         def prep_opnds(insn, tys):
             for _, opnd, c, cv in self.iter_opnd_info_struct(insn, tys):
-                if is_true(model[c]):
-                    assert not model[cv] is None
-                    yield (True, model[cv].translate(self.orig_spec.ctx))
+                if _eval_model(model, [c], None)[0]:
+                    cv = _eval_model(model, [cv], self.orig_spec.ctx)[0]
+                    assert not cv is None
+                    if not cv.ctx == self.orig_spec.ctx:
+                        yield (True, cv.translate(self.orig_spec.ctx))
+                    yield (True, cv)
                 else:
-                    assert not model[opnd] is None, str(opnd) + str(model)
-                    yield (False, model[opnd].as_long())
+                    model_opnd = _eval_model(model, [opnd], None)[0]
+                    assert not model_opnd is None, str(opnd) + str(model)
+                    yield (False, model_opnd.as_long())
         insns = []
         for insn in range(self.n_inputs, self.length - 1):
-            val    = model.evaluate(self.var_insn_op(insn), model_completion=True)
+            val    = _eval_model(model, [self.var_insn_op(insn)], self.orig_spec.ctx)
             op     = self.op_enum.get_from_model_val(val)
             opnds  = [ v for v in prep_opnds(insn, op.in_types) ]
             insns += [ (self.orig_ops[op], opnds) ]
@@ -412,15 +419,15 @@ class SynthN:
         ctx       = self.ctx
         samples_translated   = [[v.translate(ctx) for v in s] for s in samples]
 
-        def write_smt2(*args):
+        def write_smt2(filename):
             s = self.synth
             if not type(s) is Solver:
                 s = Solver(ctx=ctx)
                 s.add(self.synth)
-            if self.output_prefix:
-                filename = f'{self.output_prefix}_{"_".join(str(a) for a in args)}.smt2'
+            if filename:
                 with open(filename, 'w') as f:
                     print(s.to_smt2(), file=f)
+                    print('(get-model)', file=f)
 
         # main synthesis algorithm.
         # 1) set up counter examples
@@ -439,22 +446,24 @@ class SynthN:
                 # the formula of the specification.
                 self.add_constr_io_spec(self.n_samples, sample)
             self.n_samples += 1
-        write_smt2('synth', self.n_insns, self.n_samples)
+        filename = f'{self.output_prefix}_{"_".join(str(a) for a in ([self.n_insns] + [self.n_samples]))}.smt2'
+        write_smt2(filename)
         stat = {}
         if self.reset_solver:
             self.synth_solver.reset()
             self.synth_solver.add(self.synth)
+            write_smt2(filename)
         self.d(3, 'synth', self.n_samples, self.synth_solver)
         with timer() as elapsed:
-            res = self.synth_solver.check()
+            res, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
             synth_time = elapsed()
-            stat['synth_stat'] = self.synth_solver.statistics()
-            self.d(5, stat['synth_stat'])
+            # stat['synth_stat'] = self.synth_solver.statistics()
+            # self.d(5, stat['synth_stat'])
             self.d(2, f'synth time: {synth_time / 1e9:.3f}')
             stat['synth_time'] = synth_time
-        if res == sat:
+        if res:
             # if sat, we found location variables
-            m = self.synth_solver.model()
+            m = model
             prg = self.create_prg(m)
             self.d(4, 'model: ', m)
             return prg, stat

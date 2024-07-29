@@ -214,7 +214,7 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
 
             if res:
                 # there is a counterexample, reiterate
-                samples = [ _eval_model(model, spec.inputs) ]
+                samples = [ _eval_model(model, spec.inputs, verif.ctx) ]
                 d(4, 'verification model', model)
                 d(4, 'verif sample', samples[0])
                 verif.pop()

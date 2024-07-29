@@ -212,7 +212,7 @@ class Eval:
         write_smt2(filename, self.solver)
         solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
         assert solvable
-        res = _eval_model(model, self.outputs)
+        res = _eval_model(model, self.outputs, s.ctx)
         s.pop()
         return res
 
@@ -231,7 +231,7 @@ class Eval:
             write_smt2(filename, s)
             solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
             if solvable:
-                ins  = _eval_model(model, self.inputs)
+                ins  = _eval_model(model, self.inputs, s.ctx)
                 res += [ ins ]
                 s.add(Or([ v != iv for v, iv in zip(self.inputs, ins) ]))
             else:
