@@ -183,7 +183,7 @@ class Tests(TestBase):
 
     def test_add(self):
         x, y, ci, s, co = Bools('x y ci s co')
-        add = And([co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))])
+        add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
         spec = Spec('adder', add, [s, co], [x, y, ci])
         ops  = { Bl.not1: 0, Bl.xor2: 2, Bl.and2: 2, Bl.nand2: 0, Bl.or2: 1, Bl.nor2: 0 }
         return self.do_synth('add', spec, ops,
@@ -191,7 +191,7 @@ class Tests(TestBase):
 
     def test_add_apollo(self):
         x, y, ci, s, co = Bools('x y ci s co')
-        add = And([co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))])
+        add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, { Bl.nor3: 8 }, \
                              desc='1-bit full adder (nor3)', theory='QF_FD')

@@ -5,18 +5,8 @@ from z3 import Z3_OP_UNINTERPRETED, ExprRef, BoolRef, BoolVal, Solver, Not, unsa
     Const, Context
 
 import smtlib
-from smtlib import solve_smtlib, SupportedSolvers, _eval_model
+from smtlib import write_smt2, solve_smtlib, SupportedSolvers, _eval_model
 
-
-def write_smt2(filename: str, solver):
-    s = solver
-    if not type(s) is Solver:
-        s = Solver()  # TODO Might need to add ctx back to solver (Solver(ctx=ctx))
-        s.add(solver)
-    if filename:
-        with open(filename, 'w') as f:
-            print(s.to_smt2(), file=f)
-            print('(get-model)', file=f)
 
 class Spec:
     def collect_vars(expr):
@@ -185,12 +175,14 @@ class Func(Spec):
         fs = [ And([ subst(precond, a), subst(precond, b), \
                      subst(func, a) != subst(func, b) ], ctx) \
                 for a, b in comb(perm(ins), 2) ]
-        s = Solver(ctx=ctx)
-        s.add(Or(fs, ctx))
+        if len(fs) != 0:
+            s = Solver(ctx=ctx)
+            s.add(Or(fs, ctx))
 
-        filename = f'commutative_{self.name}.smt2'
-        write_smt2(filename, s)
-        return not smtlib.solve_smtlib(filename, SupportedSolvers.CVC)[0]
+            filename = f'commutative_{self.name}.smt2'
+            write_smt2(filename, s)
+            return not smtlib.solve_smtlib(filename, SupportedSolvers.CVC)[0]
+        return True
 
 
 class Eval:

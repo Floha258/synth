@@ -4,7 +4,7 @@ from collections import defaultdict
 from z3 import *
 
 from cegis import Prg, OpFreq, no_debug, timer, cegis
-from smtlib import solve_smtlib, SupportedSolvers, _eval_model
+from smtlib import write_smt2, solve_smtlib, SupportedSolvers, _eval_model
 from spec import Spec, Func
 from util import bv_sort
 
@@ -419,16 +419,6 @@ class SynthN:
         ctx       = self.ctx
         samples_translated   = [[v.translate(ctx) for v in s] for s in samples]
 
-        def write_smt2(filename):
-            s = self.synth
-            if not type(s) is Solver:
-                s = Solver(ctx=ctx)
-                s.add(self.synth)
-            if filename:
-                with open(filename, 'w') as f:
-                    print(s.to_smt2(), file=f)
-                    print('(get-model)', file=f)
-
         # main synthesis algorithm.
         # 1) set up counter examples
         for sample in samples_translated:
@@ -447,12 +437,13 @@ class SynthN:
                 self.add_constr_io_spec(self.n_samples, sample)
             self.n_samples += 1
         filename = f'{self.output_prefix}_{"_".join(str(a) for a in ([self.n_insns] + [self.n_samples]))}.smt2'
-        write_smt2(filename)
         stat = {}
         if self.reset_solver:
             self.synth_solver.reset()
             self.synth_solver.add(self.synth)
-            write_smt2(filename)
+            write_smt2(filename, self.synth_solver)
+        else:
+            write_smt2(filename, self.synth)
         self.d(3, 'synth', self.n_samples, self.synth_solver)
         with timer() as elapsed:
             res, _, model = solve_smtlib(filename, SupportedSolvers.CVC)

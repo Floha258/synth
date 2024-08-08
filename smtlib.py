@@ -3,7 +3,9 @@ import time
 from enum import Enum
 from contextlib import contextmanager
 import re
-from z3 import BitVecVal, BoolVal
+from z3 import BitVecVal, BoolVal, Solver
+
+
 # from oplib import Bv
 
 
@@ -18,14 +20,35 @@ class SupportedSolvers(Enum):
     YICES: str = 'yices'
 
 
+# TODO: Add set-logic command so yices recognizes BVs
+def write_smt2(filename: str, solver, ctx=None, logic='QF_AUBV'):
+    s = solver
+    if not type(s) is Solver:
+        s = Solver(ctx=ctx)  # TODO Might need to add ctx back to solver (Solver(ctx=ctx))
+        s.add(solver)
+    if filename:
+        with open(filename, 'w') as f:
+            print(f'(set-logic ALL)', file=f)
+            print(s.to_smt2(), file=f)
+            print('(get-model)', file=f)
+
+
 def solve_smtlib(filename: str, solver: SupportedSolvers) -> tuple[bool, int, list[str]]:
     with timer() as elapsed:
-        # TODO: Produce models is for cvc, yices might need a different command
-        res = subprocess.run([solver.value, filename, '--produce-models'], capture_output=True).stdout.decode(
-            'utf-8').strip()
+        if solver.value == 'cvc5':
+            res = subprocess.run([solver.value, filename, '--produce-models'], capture_output=True).stdout.decode(
+                'utf-8').strip()
+        else:
+            res = subprocess.run(['yices-smt2.exe', filename], capture_output=True).stdout.decode('utf-8').strip()
         solveTime = elapsed()
     resLines = res.split('\r\n')
-    return resLines[0] == 'sat', solveTime, resLines[1:]
+    if resLines[0] == 'sat':
+        res = True
+    elif resLines[0] == 'unsat':
+        res = False
+    else:
+        raise Exception(resLines[0])
+    return res, solveTime, resLines[1:]
 
 
 def extract_model(output: list[str]) -> dict:
@@ -65,10 +88,7 @@ def _eval_model(model: list[str], vars, ctx):
             w = int(width)
             res.append(BitVecVal(val, w, ctx))
         elif type == 'Operators':
-            # TODO: import bv without circular import or shit
-            # from oplib import Bv
             res.append(value)
-            # res.append(True)
         else:
             res.append(BoolVal(value == 'true', ctx))
     return res

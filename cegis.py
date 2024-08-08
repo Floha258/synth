@@ -1,6 +1,6 @@
 import time
 
-from smtlib import SupportedSolvers, solve_smtlib, _eval_model
+from smtlib import SupportedSolvers, write_smt2, solve_smtlib, _eval_model
 
 from contextlib import contextmanager
 from functools import cached_property
@@ -195,18 +195,8 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
             for c in prg.eval_clauses():
                 verif.add(c)
 
-            def write_smt2(filename: str):
-                s = verif
-                if not type(s) is Solver:
-                    s = Solver(ctx=ctx)
-                    s.add(verif)
-                if spec.name:
-                    with open(filename, 'w') as f:
-                        print(s.to_smt2(), file=f)
-                        print('(get-model)', file=f)
-
             filename = f'{spec.name}_verif_{samples_str}.smt2'
-            write_smt2(filename)
+            write_smt2(filename, verif)
             d(3, 'verif', samples_str, verif)
             res, verif_time, model = solve_smtlib(filename, SupportedSolvers.CVC)
             stat['verif_time'] = verif_time
