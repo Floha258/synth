@@ -15,7 +15,7 @@ class OpFreq:
 
 
 class Prg:
-    def __init__(self, spec, insns, outputs):
+    def __init__(self, spec, insns, outputs, solver=SupportedSolvers.CVC):
         """Creates a program.
 
         Attributes:
@@ -43,6 +43,7 @@ class Prg:
         self.outputs = outputs
         self.output_names = [ str(v) for v in spec.outputs ]
         self.input_names  = [ str(v) for v in spec.inputs ]
+        self.solver = solver
         # this map gives for every temporary/input variable
         # which output variables are set to it
         self.output_map = { }
@@ -153,7 +154,7 @@ def timer():
 def no_debug(level, *args):
     pass
 
-def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
+def cegis(spec: Spec, synth, init_samples=[], debug=no_debug, solver=SupportedSolvers.CVC):
     d = debug
 
     samples = init_samples if init_samples else spec.eval.sample_n(1)
@@ -198,13 +199,13 @@ def cegis(spec: Spec, synth, init_samples=[], debug=no_debug):
             filename = f'{spec.name}_verif_{samples_str}.smt2'
             write_smt2(filename, verif)
             d(3, 'verif', samples_str, verif)
-            res, verif_time, model = solve_smtlib(filename, SupportedSolvers.CVC)
+            res, verif_time, model = solve_smtlib(filename, solver)
             stat['verif_time'] = verif_time
             d(2, f'verif time {verif_time / 1e9:.3f}')
 
             if res:
                 # there is a counterexample, reiterate
-                samples = [ _eval_model(model, spec.inputs, verif.ctx) ]
+                samples = [ _eval_model(model, spec.inputs, verif.ctx, solver) ]
                 d(4, 'verification model', model)
                 d(4, 'verif sample', samples[0])
                 verif.pop()

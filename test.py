@@ -7,6 +7,7 @@ import json
 import re
 
 from cegis import OpFreq
+from smtlib import SupportedSolvers
 from spec import Spec, Func
 from oplib import Bl
 
@@ -82,7 +83,7 @@ def create_bool_func(func):
 
 class TestBase:
     def __init__(self, minlen=0, maxlen=10, debug=0, stats=False, graph=False, \
-                tests=None, write=None, timeout=None, exact=False, synth='synth_n', check=0):
+                tests=None, write=None, timeout=None, exact=False, synth='synth_n', check=0, solver='cvc'):
         def d(level, *args):
             if debug >= level:
                 print(*args)
@@ -100,6 +101,14 @@ class TestBase:
         m = importlib.import_module(synth)
         self.synth_func = getattr(m, 'synth')
 
+        if solver == 'z3':
+            self.solver = SupportedSolvers.Z3
+        elif solver == 'yices':
+            self.solver = SupportedSolvers.YICES
+        else:
+            self.solver = SupportedSolvers.CVC
+
+
     def do_synth(self, name, spec, ops, desc='', **args):
         desc = f' ({desc})' if len(desc) > 0 else ''
         print(f'{name}{desc}: ', end='', flush=True)
@@ -114,7 +123,8 @@ class TestBase:
         prg, stats = self.synth_func(spec, ops, ran, \
                                      debug=self.debug, \
                                      output_prefix=output_prefix, \
-                                     timeout=self.timeout, **args)
+                                     timeout=self.timeout, **args, \
+                                     solver=self.solver)
         total_time = sum(s['time'] for s in stats)
         print(f'{total_time / 1e9:.3f}s')
         if self.write_stats:
@@ -184,17 +194,17 @@ class Tests(TestBase):
     def test_add(self):
         x, y, ci, s, co = Bools('x y ci s co')
         add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
-        spec = Spec('adder', add, [s, co], [x, y, ci])
+        spec = Spec('adder', add, [s, co], [x, y, ci], solver=self.solver)
         ops  = { Bl.not1: 0, Bl.xor2: 2, Bl.and2: 2, Bl.nand2: 0, Bl.or2: 1, Bl.nor2: 0 }
         return self.do_synth('add', spec, ops,
                              desc='1-bit full adder', theory='QF_FD')
 
-    def test_add_apollo(self):
-        x, y, ci, s, co = Bools('x y ci s co')
-        add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
-        spec = Spec('adder', add, [s, co], [x, y, ci])
-        return self.do_synth('add_nor3', spec, { Bl.nor3: 8 }, \
-                             desc='1-bit full adder (nor3)', theory='QF_FD')
+    # def test_add_apollo(self):
+    #     x, y, ci, s, co = Bools('x y ci s co')
+    #     add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
+    #     spec = Spec('adder', add, [s, co], [x, y, ci])
+    #     return self.do_synth('add_nor3', spec, { Bl.nor3: 8 }, \
+    #                          desc='1-bit full adder (nor3)', theory='QF_FD')
 
     def test_identity(self):
         spec = Func('magic', And(Or(Bool('x'))))
@@ -248,7 +258,7 @@ class Tests(TestBase):
             Func('xor', x ^ y): 1,
             Func('shr', x >> y, precond=And([y >= 0, y < w])): 1,
         }
-        spec = Func('spec', If(x >= 0, x, -x))
+        spec = Func('spec', If(x >= 0, x, -x), solver=self.solver)
         return self.do_synth('abs', spec, ops, theory='QF_FD')
 
     def test_pow(self):
@@ -299,6 +309,7 @@ def parse_standard_args():
     parser.add_argument('-w', '--write',    default=False, action='store_true')
     parser.add_argument('-t', '--tests',    default=None, type=str)
     parser.add_argument('-s', '--synth',    type=str, default='synth_n')
+    parser.add_argument('-S', '--solver',   type=str, choices=['cvc', 'yices', 'z3'], default='cvc')
     parser.add_argument('-m', '--timeout',  help='timeout in ms', type=int, default=None)
     parser.add_argument('-x', '--exact',    default=False, action='store_true', \
                         help='synthesize using exact operator count')

@@ -21,7 +21,7 @@ class Spec:
         return res
 
     def __init__(self, name: str, phi: ExprRef, outputs: list[ExprRef], \
-                 inputs: list[ExprRef], precond: BoolRef = None):
+                 inputs: list[ExprRef], precond: BoolRef = None, solver: SupportedSolvers = SupportedSolvers.CVC):
         """
         Create a specification.
 
@@ -56,6 +56,7 @@ class Spec:
         self.phi      = phi
         self.precond  = BoolVal(True, ctx=self.ctx) if precond is None else precond
         self.vars     = Spec.collect_vars(phi)
+        self.solver = solver
         all_vars      = outputs + inputs
         assert len(set(all_vars)) == len(all_vars), 'outputs and inputs must be unique'
         assert self.vars <= set(all_vars), \
@@ -96,7 +97,7 @@ class Spec:
         solver.add(Not(self.precond))
         filename = f'total_{self.name}.smt2'
         write_smt2(filename, solver)
-        return not smtlib.solve_smtlib(filename, SupportedSolvers.CVC)[0]
+        return not smtlib.solve_smtlib(filename, self.solver)[0]
 
     @cached_property
     def is_deterministic(self):
@@ -111,7 +112,7 @@ class Spec:
         solver.add(Or ([a != b for a, b in zip(self.outputs, outs)]))
         filename = f'deterministic_{self.name}.smt2'
         write_smt2(filename, solver)
-        return not smtlib.solve_smtlib(filename, SupportedSolvers.CVC)[0]
+        return not smtlib.solve_smtlib(filename, self.solver)[0]
 
     def instantiate(self, outs, ins):
         self_outs = self.outputs
@@ -125,7 +126,7 @@ class Spec:
 
 
 class Func(Spec):
-    def __init__(self, name, phi, precond=BoolVal(True), inputs=[]):
+    def __init__(self, name, phi, precond=BoolVal(True), inputs=[], solver=SupportedSolvers.CVC):
         """Creates an Op from a Z3 expression.
 
         Attributes:
@@ -146,7 +147,7 @@ class Func(Spec):
         res_ty = phi.sort()
         self.func = phi
         out = Const(names[0], res_ty) if names else FreshConst(res_ty, 'y')
-        super().__init__(name, out == phi, [ out ], inputs, precond=precond)
+        super().__init__(name, out == phi, [ out ], inputs, precond=precond, solver=solver)
 
     @cached_property
     def out_type(self):
@@ -181,30 +182,31 @@ class Func(Spec):
 
             filename = f'commutative_{self.name}.smt2'
             write_smt2(filename, s)
-            return not smtlib.solve_smtlib(filename, SupportedSolvers.CVC)[0]
+            return not smtlib.solve_smtlib(filename, self.solver)[0]
         return True
 
 
 class Eval:
-    def __init__(self, inputs, outputs, solver, name):
+    def __init__(self, inputs, outputs, eval_solver, name, solver=SupportedSolvers.CVC):
         self.inputs = inputs
         self.outputs = outputs
-        self.solver = solver
+        self.eval_solver = eval_solver
         self.name = name
+        self.solver = solver
 
 
 
     def __call__(self, input_vals):
-        s = self.solver
+        s = self.eval_solver
         s.push()
         for var, val in zip(self.inputs, input_vals):
             s.add(var == val)
         # assert s.check() == sat
         filename = f'{self.name}_eval_{"_".join(str(i) for i in self.inputs)}.smt2'
-        write_smt2(filename, self.solver)
-        solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
+        write_smt2(filename, self.eval_solver)
+        solvable, _, model = solve_smtlib(filename, self.solver)
         assert solvable
-        res = _eval_model(model, self.outputs, s.ctx)
+        res = _eval_model(model, self.outputs, s.ctx, self.solver)
         s.pop()
         return res
 
@@ -216,14 +218,14 @@ class Eval:
            are less than n unique inputs.
         """
         res = []
-        s = self.solver
+        s = self.eval_solver
         s.push()
         for i in range(n):
             filename = f'{self.name}_sample_{i}.smt2'
             write_smt2(filename, s)
-            solvable, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
+            solvable, _, model = solve_smtlib(filename, self.solver)
             if solvable:
-                ins  = _eval_model(model, self.inputs, s.ctx)
+                ins  = _eval_model(model, self.inputs, s.ctx, self.solver)
                 res += [ ins ]
                 s.add(Or([ v != iv for v, iv in zip(self.inputs, ins) ]))
             else:

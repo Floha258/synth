@@ -52,7 +52,7 @@ class SynthN:
                  debug=no_debug, timeout=None, max_const=None, const_set=None, \
                  output_prefix=None, theory=None, reset_solver=True, \
                  opt_no_dead_code=True, opt_no_cse=True, opt_const=True, \
-                 opt_commutative=True, opt_insn_order=True):
+                 opt_commutative=True, opt_insn_order=True, solver=SupportedSolvers.CVC):
 
         """Synthesize a program that computes the given functions.
 
@@ -107,6 +107,7 @@ class SynthN:
         self.arities   = [ 0 ] * self.n_inputs \
                        + [ max_arity ] * self.n_insns \
                        + [ self.n_outputs ]
+        self.solver = solver
 
         assert all(o.ctx == ctx for o in self.ops)
         assert all(op.ctx == spec.ctx for op in self.orig_ops)
@@ -313,7 +314,8 @@ class SynthN:
                 if opt_commutative and op.is_commutative:
                     opnds = list(self.var_insn_opnds(insn))
                     c = [ ULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:]) ]
-                    solver.add(Implies(op_var == op_id, And(c, self.ctx)))
+                    if len(c) > 0:
+                        solver.add(Implies(op_var == op_id, And(c, self.ctx)))
 
                 if opt_const:
                     vars = [ v for v in self.var_insn_opnds_is_const(insn) ][:op.arity]
@@ -396,24 +398,24 @@ class SynthN:
     def create_prg(self, model):
         def prep_opnds(insn, tys):
             for _, opnd, c, cv in self.iter_opnd_info_struct(insn, tys):
-                if _eval_model(model, [c], None)[0]:
-                    cv = _eval_model(model, [cv], self.orig_spec.ctx)[0]
+                if _eval_model(model, [c], None, self.solver)[0]:
+                    cv = _eval_model(model, [cv], self.orig_spec.ctx, self.solver)[0]
                     assert not cv is None
                     if not cv.ctx == self.orig_spec.ctx:
                         yield (True, cv.translate(self.orig_spec.ctx))
                     yield (True, cv)
                 else:
-                    model_opnd = _eval_model(model, [opnd], None)[0]
+                    model_opnd = _eval_model(model, [opnd], None, self.solver)[0]
                     assert not model_opnd is None, str(opnd) + str(model)
                     yield (False, model_opnd.as_long())
         insns = []
         for insn in range(self.n_inputs, self.length - 1):
-            val    = _eval_model(model, [self.var_insn_op(insn)], self.orig_spec.ctx)
+            val    = _eval_model(model, [self.var_insn_op(insn)], self.orig_spec.ctx, self.solver)
             op     = self.op_enum.get_from_model_val(val)
             opnds  = [ v for v in prep_opnds(insn, op.in_types) ]
             insns += [ (self.orig_ops[op], opnds) ]
         outputs      = [ v for v in prep_opnds(self.out_insn, self.out_tys) ]
-        return Prg(self.orig_spec, insns, outputs)
+        return Prg(self.orig_spec, insns, outputs, solver=self.solver)
 
     def synth_with_new_samples(self, samples):
         ctx       = self.ctx
@@ -446,7 +448,7 @@ class SynthN:
             write_smt2(filename, self.synth)
         self.d(3, 'synth', self.n_samples, self.synth_solver)
         with timer() as elapsed:
-            res, _, model = solve_smtlib(filename, SupportedSolvers.CVC)
+            res, _, model = solve_smtlib(filename, self.solver)
             synth_time = elapsed()
             # stat['synth_stat'] = self.synth_solver.statistics()
             # self.d(5, stat['synth_stat'])
@@ -483,7 +485,7 @@ def synth(spec: Spec, ops, iter_range, n_samples=1, **args):
         with timer() as elapsed:
             synthesizer = SynthN(spec, ops, n_insns, **args)
             prg, stats = cegis(spec, synthesizer, init_samples=init_samples, \
-                               debug=synthesizer.d)
+                               debug=synthesizer.d, solver=synthesizer.solver)
             all_stats += [ { 'time': elapsed(), 'iterations': stats } ]
             if not prg is None:
                 return prg, all_stats
