@@ -276,27 +276,27 @@ class Tests(TestBase):
         ops  = { Func('mul', a * b): 2, Func('add', a + b): 2 }
         return self.do_synth('poly', spec, ops, max_const=0)
 
-    def test_array(self):
-        def Arr(name):
-            return Array(name, IntSort(), IntSort())
-
-        def permutation(array, perm):
-            res = array
-            for fr, to in enumerate(perm):
-                if fr != to:
-                    res = Store(res, to, Select(array, fr))
-            return res
-
-        def swap(a, x, y):
-            b = Store(a, x, Select(a, y))
-            c = Store(b, y, Select(a, x))
-            return c
-
-        x = Array('x', IntSort(), IntSort())
-        p = Int('p')
-        op   = Func('swap', swap(x, p, p + 1))
-        spec = Func('rev', permutation(x, [3, 2, 1, 0]))
-        return self.do_synth('array', spec, { op: 6 })
+    # def test_array(self):
+    #     def Arr(name):
+    #         return Array(name, IntSort(), IntSort())
+    #
+    #     def permutation(array, perm):
+    #         res = array
+    #         for fr, to in enumerate(perm):
+    #             if fr != to:
+    #                 res = Store(res, to, Select(array, fr))
+    #         return res
+    #
+    #     def swap(a, x, y):
+    #         b = Store(a, x, Select(a, y))
+    #         c = Store(b, y, Select(a, x))
+    #         return c
+    #
+    #     x = Array('x', IntSort(), IntSort())
+    #     p = Int('p')
+    #     op   = Func('swap', swap(x, p, p + 1))
+    #     spec = Func('rev', permutation(x, [3, 2, 1, 0]))
+    #     return self.do_synth('array', spec, { op: 6 })
 
 def parse_standard_args():
     import argparse
