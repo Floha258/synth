@@ -286,7 +286,7 @@ class Tests(TestBase):
 
     def test_add_apollo(self):
         x, y, ci, s, co = Bools('x y ci s co')
-        add = And([co == AtLeast(x, y, ci, 2), s == Xor(x, Xor(y, ci))])
+        add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, {Bl.nor3: 8}, Bl.ops, \
                              desc='1-bit full adder (nor3)', theory='QF_FD')
@@ -300,9 +300,10 @@ class Tests(TestBase):
         spec = Func('magic', Or(Or(x, y, z), Not(x)))
         return self.do_synth('true', spec, {}, Bl.ops, desc='constant true')
 
+    # TODO: What to do with variables that are not in model?
     def test_false(self):
         x, y, z = Bools('x y z')
-        spec = Spec('magic', z == Or([]), [z], [x])
+        spec = Spec('magic', z == simplify(Or([])), [z], [x])
         return self.do_synth('false', spec, {}, Bl.ops, desc='constant false')
 
     def test_multiple_types(self):

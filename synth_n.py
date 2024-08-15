@@ -9,6 +9,15 @@ from spec import Spec, Func
 from util import bv_sort
 
 
+def at_most(items: list, f: int, ctx=None) -> ExprRef | bool:
+    def bool_to_int(bool):
+        return If(bool, IntVal(1, ctx), IntVal(0, ctx))
+
+    sum = IntVal(0, ctx)
+    for b in items:
+        sum += bool_to_int(b)
+    return sum <= IntVal(f, ctx)
+
 class EnumBase:
     def __init__(self, items, cons):
         assert len(items) == len(cons)
@@ -216,7 +225,8 @@ class SynthN:
                 a = [self.var_insn_op(insn) == op_cons \
                      for insn in range(self.n_inputs, self.length - 1)]
                 if a:
-                    solver.add(AtMost(*a, f))
+                    solver.add(at_most(a, f, self.ctx))
+                    # solver.add(AtMost(*a, f))
 
         # pin operands of an instruction that are not used (because of arity)
         # to the last input of that instruction
@@ -239,8 +249,8 @@ class SynthN:
         max_const_ran = range(self.n_inputs, self.length)
         # max_const_ran = range(self.n_inputs, self.length - 1)
         if not max_const is None and len(max_const_ran) > 0:
-            solver.add(AtMost(*[v for insn in max_const_ran \
-                                for v in self.var_insn_opnds_is_const(insn)], max_const))
+            solver.add(at_most([v for insn in max_const_ran \
+                                for v in self.var_insn_opnds_is_const(insn)], max_const, self.ctx))
 
         # limit the possible set of constants if desired
         if const_set:

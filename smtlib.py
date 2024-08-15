@@ -189,6 +189,10 @@ def _eval_model(model: list[str], vars, ctx, solver):
             # no brackets in v but pipes, means we have to remove the pipes
             v = v[1:-1]
 
+        if v not in m:
+            res.append(BoolVal(True, ctx))
+            break
+
         if len(m[v]) == 1:
             res.append(m[v][0])
             break
