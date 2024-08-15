@@ -99,7 +99,7 @@ if __name__ == "__main__":
                         help=f'comma-separated list of operators ({avail_ops_names})')
     parser.add_argument('-w', '--write', default=False, action='store_true', \
                         help='dump the individual SMT queries to files')
-    parser.add_argument('-s', '--stats', default=False, action='store_true', \
+    parser.add_argument('-t', '--stats', default=False, action='store_true', \
                         help='write stats to a JSON file')
     parser.add_argument('-g', '--graph', default=False, action='store_true', \
                         help='write the program graph to a DOT file')
@@ -109,7 +109,7 @@ if __name__ == "__main__":
                         help='read boolean function from a pla file')
     parser.add_argument('-o', '--outs',  type=str, action='store', \
                         help='comma-separated list output variables in pla file to consider')
-    parser.add_argument('-y', '--synth',  type=str, action='store', default='synth_fa', \
+    parser.add_argument('-s', '--synth',  type=str, action='store', default='synth_fa', \
                         help='module of synthesizer (default: synth_fa)')
     parser.add_argument('functions', nargs=argparse.REMAINDER, \
                         help='boolean function as a hex number (possibly multiple))')

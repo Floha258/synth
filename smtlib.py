@@ -4,7 +4,7 @@ import time
 from enum import Enum
 from contextlib import contextmanager
 import re
-from z3 import BitVecVal, BoolVal, Solver, Array, IntSort, K, Store, IntVal, Int, ExprRef
+from z3 import BitVecVal, BoolVal, Solver, Array, IntSort, K, Store, IntVal, Int, ExprRef, Tactic, simplify
 
 
 # from oplib import Bv
@@ -22,19 +22,23 @@ class SupportedSolvers(Enum):
     Z3: str = 'z3'
 
 
-# TODO: Add set-logic command so yices recognizes BVs
-def write_smt2(filename: str, solver, ctx=None, logic='QF_AUBV'):
+def write_smt2(filename: str, solver, ctx=None, logic='ALL'):
+    if logic is None:
+        logic = 'ALL'
     s = solver
     if not type(s) is Solver:
-        s = Solver(ctx=ctx)  # TODO Might need to add ctx back to solver (Solver(ctx=ctx))
-        s.add(solver)
+        s = Solver(ctx=ctx)
+        t = Tactic('card2bv', ctx=ctx)
+        for a in solver:
+            for b in t(simplify(a)):
+                s.add(b)
     if filename:
         file_dir = path.join(path.dirname(__file__), 'smt2')
         makedirs(file_dir, exist_ok=True)
         filepath = path.join(file_dir, filename)
 
         with open(filepath, 'w') as f:
-            print(f'(set-logic ALL)', file=f)
+            print(f'(set-logic {logic})', file=f)
             print(s.to_smt2(), file=f)
             print('(get-model)', file=f)
 
@@ -46,7 +50,7 @@ def solve_smtlib(filename: str, solver: SupportedSolvers) -> tuple[bool, int, li
         if solver.value == 'z3':
             res = subprocess.run(['z3', filepath], capture_output=True).stdout.decode('utf-8').strip()
         elif solver.value == 'yices':
-            res = subprocess.run(['yices-smt2', filepath], capture_output=True).stdout.decode('utf-8').strip()
+            res = subprocess.run(['yices-smt2', filepath, f'--tlimit={8 * 60 * 1000}'], capture_output=True).stdout.decode('utf-8').strip()
         else:
             res = subprocess.run(['cvc5', filepath, '--produce-models'], capture_output=True).stdout.decode(
                 'utf-8').strip()

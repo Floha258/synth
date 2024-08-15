@@ -8,15 +8,17 @@ from smtlib import write_smt2, solve_smtlib, SupportedSolvers, _eval_model
 from spec import Spec, Func
 from util import bv_sort
 
+
 class EnumBase:
     def __init__(self, items, cons):
         assert len(items) == len(cons)
         self.cons = cons
-        self.item_to_cons = { i: con for i, con in zip(items, cons) }
-        self.cons_to_item = { str(con): i for i, con in zip(items, cons) }
+        self.item_to_cons = {i: con for i, con in zip(items, cons)}
+        self.cons_to_item = {str(con): i for i, con in zip(items, cons)}
 
     def __len__(self):
         return len(self.cons)
+
 
 class EnumSortEnum(EnumBase):
     def __init__(self, name, items, ctx):
@@ -26,7 +28,7 @@ class EnumSortEnum(EnumBase):
         for i in items:
             s.declare(str(i))
         self.sort = s.create()
-        cons = [ getattr(self.sort, str(i)) for i in items ]
+        cons = [getattr(self.sort, str(i)) for i in items]
         super().__init__(items, cons)
 
     def get_from_model_val(self, val):
@@ -36,10 +38,11 @@ class EnumSortEnum(EnumBase):
     def add_range_constr(self, solver, var):
         pass
 
+
 class BitVecEnum(EnumBase):
     def __init__(self, name, items, ctx):
         self.sort = bv_sort(len(items), ctx)
-        super().__init__(items, [ i for i, _ in enumerate(items) ])
+        super().__init__(items, [i for i, _ in enumerate(items)])
 
     def get_from_model_val(self, val):
         return self.cons_to_item[val.as_long()]
@@ -47,12 +50,13 @@ class BitVecEnum(EnumBase):
     def add_range_constr(self, solver, var):
         solver.add(ULT(var, len(self.item_to_cons)))
 
+
 class SynthN:
     def __init__(self, spec: Spec, ops: list[Func], n_insns, \
                  debug=no_debug, timeout=None, max_const=None, const_set=None, \
-                 output_prefix=None, theory=None, reset_solver=True, \
+                 output_prefix=None, theory=None, solver=SupportedSolvers.CVC, \
                  opt_no_dead_code=True, opt_no_cse=True, opt_const=True, \
-                 opt_commutative=True, opt_insn_order=True, solver=SupportedSolvers.CVC):
+                 opt_commutative=True, opt_insn_order=True):
 
         """Synthesize a program that computes the given functions.
 
@@ -83,30 +87,30 @@ class SynthN:
         iteration of the synthesis loop.
         """
         assert all(insn.ctx == spec.ctx for insn in ops)
-        self.ctx       = ctx = Context()
+        self.ctx = ctx = Context()
         self.orig_spec = spec
-        self.spec      = spec = spec.translate(ctx)
+        self.spec = spec = spec.translate(ctx)
 
         if len(ops) == 0:
-            ops = { Func('dummy', Int('v') + 1): 0 }
+            ops = {Func('dummy', Int('v') + 1): 0}
         elif type(ops) == list or type(ops) == set:
-            ops = { op: OpFreq.MAX for op in ops }
+            ops = {op: OpFreq.MAX for op in ops}
 
-        self.orig_ops  = { op.translate(ctx): op for op in ops }
-        self.op_freqs  = { op_new: ops[op_old] for op_new, op_old in self.orig_ops.items() }
-        self.ops       = ops = list(self.orig_ops.keys())
-        self.n_insns   = n_insns
+        self.orig_ops = {op.translate(ctx): op for op in ops}
+        self.op_freqs = {op_new: ops[op_old] for op_new, op_old in self.orig_ops.items()}
+        self.ops = ops = list(self.orig_ops.keys())
+        self.n_insns = n_insns
 
-        self.in_tys    = spec.in_types
-        self.out_tys   = spec.out_types
-        self.n_inputs  = len(self.in_tys)
+        self.in_tys = spec.in_types
+        self.out_tys = spec.out_types
+        self.n_inputs = len(self.in_tys)
         self.n_outputs = len(self.out_tys)
-        self.out_insn  = self.n_inputs + self.n_insns
-        self.length    = self.out_insn + 1
-        max_arity      = max(op.arity for op in ops)
-        self.arities   = [ 0 ] * self.n_inputs \
-                       + [ max_arity ] * self.n_insns \
-                       + [ self.n_outputs ]
+        self.out_insn = self.n_inputs + self.n_insns
+        self.length = self.out_insn + 1
+        max_arity = max(op.arity for op in ops)
+        self.arities = [0] * self.n_inputs \
+                       + [max_arity] * self.n_insns \
+                       + [self.n_outputs]
         self.solver = solver
 
         assert all(o.ctx == ctx for o in self.ops)
@@ -128,15 +132,8 @@ class SynthN:
         self.d = debug
         self.n_samples = 0
         self.output_prefix = output_prefix
-        self.reset_solver = reset_solver
 
-        if theory:
-            self.synth_solver = SolverFor(theory, ctx=ctx)
-        else:
-            self.synth_solver = Tactic('psmt', ctx=ctx).solver()
-        if not timeout is None:
-            self.synth_solver.set('timeout', timeout)
-        self.synth = Goal(ctx=ctx) if reset_solver else self.synth_solver
+        self.synth = Solver(ctx=ctx)
         # add well-formedness, well-typedness, and optimization constraints
         self.add_constr_wfp(max_const, const_set)
         self.add_constr_ty()
@@ -194,16 +191,16 @@ class SynthN:
 
     def iter_opnd_info(self, insn, tys, instance):
         return zip(tys, \
-                self.var_insn_opnds(insn), \
-                self.var_insn_opnds_val(insn, tys, instance), \
-                self.var_insn_opnds_is_const(insn), \
-                self.var_insn_op_opnds_const_val(insn, tys))
+                   self.var_insn_opnds(insn), \
+                   self.var_insn_opnds_val(insn, tys, instance), \
+                   self.var_insn_opnds_is_const(insn), \
+                   self.var_insn_op_opnds_const_val(insn, tys))
 
     def iter_opnd_info_struct(self, insn, tys):
         return zip(tys, \
-                self.var_insn_opnds(insn), \
-                self.var_insn_opnds_is_const(insn), \
-                self.var_insn_op_opnds_const_val(insn, tys))
+                   self.var_insn_opnds(insn), \
+                   self.var_insn_opnds_is_const(insn), \
+                   self.var_insn_op_opnds_const_val(insn, tys))
 
     def add_constr_wfp(self, max_const, const_set):
         solver = self.synth
@@ -216,8 +213,8 @@ class SynthN:
 
         for op, op_cons in self.op_enum.item_to_cons.items():
             if (f := self.op_freqs[op]) < OpFreq.MAX:
-                a = [ self.var_insn_op(insn) == op_cons \
-                      for insn in range(self.n_inputs, self.length - 1) ]
+                a = [self.var_insn_op(insn) == op_cons \
+                     for insn in range(self.n_inputs, self.length - 1)]
                 if a:
                     solver.add(AtMost(*a, f))
 
@@ -232,14 +229,18 @@ class SynthN:
                     solver.add(Implies(self.var_insn_op(insn) == op_id, \
                                        opnd == opnds[op.arity - 1]))
 
+        # If supplied with an empty det of constants, we don't allow any constants
+        if not const_set is None and len(const_set) == 0:
+            max_const = 0
+
         # Add a constraint for the maximum amount of constants if specified.
         # The output instruction is exempt because we need to be able
         # to synthesize constant outputs correctly.
         max_const_ran = range(self.n_inputs, self.length)
         # max_const_ran = range(self.n_inputs, self.length - 1)
         if not max_const is None and len(max_const_ran) > 0:
-            solver.add(AtMost(*[ v for insn in max_const_ran \
-                        for v in self.var_insn_opnds_is_const(insn)], max_const))
+            solver.add(AtMost(*[v for insn in max_const_ran \
+                                for v in self.var_insn_opnds_is_const(insn)], max_const))
 
         # limit the possible set of constants if desired
         if const_set:
@@ -250,7 +251,7 @@ class SynthN:
             for insn in range(self.n_inputs, self.length):
                 for op, op_id in self.op_enum.item_to_cons.items():
                     for ty, _, _, cv in self.iter_opnd_info_struct(insn, op.in_types):
-                        solver.add(Or([ cv == v for v in const_map[ty] ]))
+                        solver.add(Or([cv == v for v in const_map[ty]]))
 
     def add_constr_ty(self):
         if len(self.ty_enum) <= 1:
@@ -266,11 +267,11 @@ class SynthN:
             for op, op_id in self.op_enum.item_to_cons.items():
                 # add constraints that set the result type of each instruction
                 solver.add(Implies(self.var_insn_op(insn) == op_id, \
-                                self.var_insn_res_type(insn) == types[op.out_type]))
+                                   self.var_insn_res_type(insn) == types[op.out_type]))
                 # add constraints that set the type of each operand
                 for op_ty, v in zip(op.in_types, self.var_insn_opnds_type(insn)):
                     solver.add(Implies(self.var_insn_op(insn) == op_id, \
-                                        v == types[op_ty]))
+                                       v == types[op_ty]))
 
         # define types of inputs
         for inp, ty in enumerate(self.in_tys):
@@ -287,7 +288,7 @@ class SynthN:
                                        self.var_insn_opnds_is_const(insn), \
                                        self.var_insn_opnds_type(insn)):
                     solver.add(Implies(Not(c), Implies(opnd == other, \
-                                    ty == self.var_insn_res_type(other))))
+                                                       ty == self.var_insn_res_type(other))))
             self.ty_enum.add_range_constr(solver, self.var_insn_res_type(insn))
 
     def add_constr_opt(self, opt_no_dead_code, opt_no_cse, \
@@ -313,12 +314,12 @@ class SynthN:
                 # if operator is commutative, force the operands to be in ascending order
                 if opt_commutative and op.is_commutative:
                     opnds = list(self.var_insn_opnds(insn))
-                    c = [ ULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:]) ]
+                    c = [ULE(l, u) for l, u in zip(opnds[:op.arity - 1], opnds[1:])]
                     if len(c) > 0:
                         solver.add(Implies(op_var == op_id, And(c, self.ctx)))
 
                 if opt_const:
-                    vars = [ v for v in self.var_insn_opnds_is_const(insn) ][:op.arity]
+                    vars = [v for v in self.var_insn_opnds_is_const(insn)][:op.arity]
                     assert len(vars) > 0
                     if op.arity == 2 and op.is_commutative:
                         # Binary commutative operators have at most one constant operand
@@ -333,16 +334,16 @@ class SynthN:
             # a previous occurrence of the same operation.
             if opt_no_cse:
                 for other in range(self.n_inputs, insn):
-                    un_eq = [ p != q for p, q in zip(self.var_insn_opnds(insn), self.var_insn_opnds(other)) ]
+                    un_eq = [p != q for p, q in zip(self.var_insn_opnds(insn), self.var_insn_opnds(other))]
                     assert len(un_eq) > 0
                     solver.add(Implies(op_var == self.var_insn_op(other), Or(un_eq)))
 
         # no dead code: each produced value is used
         if opt_no_dead_code:
             for prod in range(self.n_inputs, self.length):
-                opnds = [ And([ prod == v, Not(c) ]) \
-                          for cons in range(prod + 1, self.length) \
-                          for c, v in zip(self.var_insn_opnds_is_const(cons), self.var_insn_opnds(cons)) ]
+                opnds = [And([prod == v, Not(c)]) \
+                         for cons in range(prod + 1, self.length) \
+                         for c, v in zip(self.var_insn_opnds_is_const(cons), self.var_insn_opnds(cons))]
                 if len(opnds) > 0:
                     solver.add(Or(opnds))
 
@@ -364,8 +365,8 @@ class SynthN:
             for op, op_id in self.op_enum.item_to_cons.items():
                 res = self.var_insn_res(insn, op.out_type, instance)
                 opnds = list(self.var_insn_opnds_val(insn, op.in_types, instance))
-                precond, phi = op.instantiate([ res ], opnds)
-                self.synth.add(Implies(op_var == op_id, And([ precond, phi ])))
+                precond, phi = op.instantiate([res], opnds)
+                self.synth.add(Implies(op_var == op_id, And([precond, phi])))
             # connect values of operands to values of corresponding results
             for op in self.ops:
                 self.add_constr_conn(insn, op.in_types, instance)
@@ -391,7 +392,7 @@ class SynthN:
         assert all(not val is None for val in in_vals)
         for inp, val in enumerate(in_vals):
             self.synth.add(val == self.var_input_res(inp, instance))
-        outs = [ v for v in self.var_outs_val(instance) ]
+        outs = [v for v in self.var_outs_val(instance)]
         precond, phi = self.spec.instantiate(outs, in_vals)
         self.synth.add(Implies(precond, phi))
 
@@ -408,18 +409,20 @@ class SynthN:
                     model_opnd = _eval_model(model, [opnd], None, self.solver)[0]
                     assert not model_opnd is None, str(opnd) + str(model)
                     yield (False, model_opnd.as_long())
+
         insns = []
         for insn in range(self.n_inputs, self.length - 1):
-            val    = _eval_model(model, [self.var_insn_op(insn)], self.orig_spec.ctx, self.solver)
-            op     = self.op_enum.get_from_model_val(val)
-            opnds  = [ v for v in prep_opnds(insn, op.in_types) ]
-            insns += [ (self.orig_ops[op], opnds) ]
-        outputs      = [ v for v in prep_opnds(self.out_insn, self.out_tys) ]
-        return Prg(self.orig_spec, insns, outputs, solver=self.solver)
+            val = _eval_model(model, [self.var_insn_op(insn)], self.orig_spec.ctx, self.solver)
+            op = self.op_enum.get_from_model_val(val)
+            opnds = [v for v in prep_opnds(insn, op.in_types)]
+            insns += [(self.orig_ops[op], opnds)]
+        outputs = [v for v in prep_opnds(self.out_insn, self.out_tys)]
+        s = self.orig_spec
+        return Prg(s.ctx, insns, outputs, s.outputs, s.inputs, solver=self.solver)
 
     def synth_with_new_samples(self, samples):
-        ctx       = self.ctx
-        samples_translated   = [[v.translate(ctx) for v in s] for s in samples]
+        ctx = self.ctx
+        samples_translated = [[v.translate(ctx) for v in s] for s in samples]
 
         # main synthesis algorithm.
         # 1) set up counter examples
@@ -439,21 +442,12 @@ class SynthN:
                 self.add_constr_io_spec(self.n_samples, sample)
             self.n_samples += 1
         filename = f'{self.output_prefix}_{"_".join(str(a) for a in ([self.n_insns] + [self.n_samples]))}.smt2'
+        write_smt2(filename, self.synth)
         stat = {}
-        if self.reset_solver:
-            self.synth_solver.reset()
-            self.synth_solver.add(self.synth)
-            write_smt2(filename, self.synth_solver)
-        else:
-            write_smt2(filename, self.synth)
-        self.d(3, 'synth', self.n_samples, self.synth_solver)
-        with timer() as elapsed:
-            res, _, model = solve_smtlib(filename, self.solver)
-            synth_time = elapsed()
-            # stat['synth_stat'] = self.synth_solver.statistics()
-            # self.d(5, stat['synth_stat'])
-            self.d(2, f'synth time: {synth_time / 1e9:.3f}')
-            stat['synth_time'] = synth_time
+        self.d(3, 'synth', self.n_samples, self.synth)
+        res, time, model = solve_smtlib(filename, self.solver)
+        self.d(2, f'synth time: {time / 1e9:.3f}')
+        stat['synth_time'] = time
         if res:
             # if sat, we found location variables
             m = model
@@ -462,6 +456,7 @@ class SynthN:
             return prg, stat
         else:
             return None, stat
+
 
 def synth(spec: Spec, ops, iter_range, n_samples=1, **args):
     """Synthesize a program that computes the given function.
@@ -486,7 +481,7 @@ def synth(spec: Spec, ops, iter_range, n_samples=1, **args):
             synthesizer = SynthN(spec, ops, n_insns, **args)
             prg, stats = cegis(spec, synthesizer, init_samples=init_samples, \
                                debug=synthesizer.d, solver=synthesizer.solver)
-            all_stats += [ { 'time': elapsed(), 'iterations': stats } ]
+            all_stats += [{'time': elapsed(), 'iterations': stats}]
             if not prg is None:
                 return prg, all_stats
     return None, all_stats

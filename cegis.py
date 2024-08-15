@@ -15,7 +15,7 @@ class OpFreq:
 
 
 class Prg:
-    def __init__(self, spec, insns, outputs, solver=SupportedSolvers.CVC):
+    def __init__(self, ctx, insns, outputs, out_vars, in_vars, solver=SupportedSolvers.CVC):
         """Creates a program.
 
         Attributes:
@@ -37,12 +37,14 @@ class Prg:
             Note that the first n numbers are taken by the n inputs
             of the program.
         """
-        assert all(insn.ctx == spec.ctx for insn, _ in insns)
-        self.spec = spec
+        assert all(insn.ctx == ctx for insn, _ in insns)
+        self.ctx = ctx
         self.insns = insns
         self.outputs = outputs
-        self.output_names = [ str(v) for v in spec.outputs ]
-        self.input_names  = [ str(v) for v in spec.inputs ]
+        self.output_names = [ str(v) for v in out_vars ]
+        self.input_names  = [ str(v) for v in in_vars ]
+        self.out_vars = out_vars
+        self.in_vars = in_vars
         self.solver = solver
         # this map gives for every temporary/input variable
         # which output variables are set to it
@@ -63,31 +65,28 @@ class Prg:
         return len(self.insns)
 
     def eval_clauses(self):
-        spec = self.spec
-        vars = list(spec.inputs)
+        vars = list(self.in_vars)
         n_inputs = len(vars)
         def get_val(p):
             is_const, v = p
             assert is_const or v < len(vars), f'variable out of range: {v}/{len(vars)}'
             return v if is_const else vars[v]
         for i, (insn, opnds) in enumerate(self.insns):
-            assert insn.ctx == spec.ctx
+            assert insn.ctx == self.ctx
             subst = [ (i, get_val(p)) \
                       for i, p in zip(insn.inputs, opnds) ]
             res = Const(self.var_name(i + n_inputs), insn.func.sort())
             vars.append(res)
-            # print('Subst:')
-            # print(subst)
             yield res == substitute(insn.func, subst)
-        for o, p in zip(spec.outputs, self.outputs):
+        for o, p in zip(self.out_vars, self.outputs):
             yield o == get_val(p)
 
     @cached_property
     def eval(self):
-        s = Solver(ctx=self.spec.ctx)
+        s = Solver(ctx=self.ctx)
         for p in self.eval_clauses():
             s.add(p)
-        return Eval(self.spec.inputs, self.spec.outputs, s)
+        return Eval(self.in_vars, self.out_vars, s)
 
     def __str__(self):
         n_inputs   = len(self.input_names)
@@ -122,7 +121,7 @@ class Prg:
 
         save_stdout, sys.stdout = sys.stdout, file
         n_inputs = len(self.input_names)
-        print(f"""digraph G {{3
+        print(f"""digraph G {{
   rankdir=BT
   {{
     rank = same;
