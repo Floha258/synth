@@ -54,7 +54,7 @@ class BitVecEnum(EnumBase):
         super().__init__(items, [i for i, _ in enumerate(items)])
 
     def get_from_model_val(self, val):
-        return self.cons_to_item[val.as_long()]
+        return self.cons_to_item[str(val[0].as_long())]
 
     def add_range_constr(self, solver, var):
         solver.add(ULT(var, len(self.item_to_cons)))
@@ -127,9 +127,10 @@ class SynthN:
         types = set(ty for op in ops for ty in op.out_types + op.in_types)
 
         # prepare operator enum sort
-        self.op_enum = EnumSortEnum('Operators', ops, ctx)
+        # TODO: BitVecSortEnum
+        self.op_enum = BitVecEnum('Operators', ops, ctx)
         # create map of types to their id
-        self.ty_enum = EnumSortEnum('Types', types, ctx)
+        self.ty_enum = BitVecEnum('Types', types, ctx)
 
         # get the sorts for the variables used in synthesis
         self.ty_sort = self.ty_enum.sort
@@ -142,6 +143,7 @@ class SynthN:
         self.n_samples = 0
         self.output_prefix = output_prefix
 
+        # TODO: Solver or Goal
         self.synth = Solver(ctx=ctx)
         # add well-formedness, well-typedness, and optimization constraints
         self.add_constr_wfp(max_const, const_set)
@@ -451,7 +453,7 @@ class SynthN:
                 # the formula of the specification.
                 self.add_constr_io_spec(self.n_samples, sample)
             self.n_samples += 1
-        filename = f'{self.output_prefix}_{"_".join(str(a) for a in ([self.n_insns] + [self.n_samples]))}.smt2'
+        filename = f'{self.spec.name}_{"_".join(str(a) for a in ([self.n_insns] + [self.n_samples]))}.smt2'
         write_smt2(filename, self.synth)
         stat = {}
         self.d(3, 'synth', self.n_samples, self.synth)

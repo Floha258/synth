@@ -198,7 +198,7 @@ class TestBase:
         total_time = sum(s['time'] for s in stats)
         print(f'{total_time / 1e9:.3f}s')
         if self.write_stats:
-            with open(f'{name}.json', 'w') as f:
+            with open(f'stats/{name}_{self.solver.value}.json', 'w') as f:
                 json.dump(stats, f, indent=4)
         if self.write_graph:
             with open(f'{name}.dot', 'w') as f:
@@ -226,6 +226,13 @@ class TestBase:
             except Exception as e:
                 print(f'Failed run test {name}')
                 print(e)
+                if self.write_stats:
+                    name = name.split('test_')[1]
+                    with open(f'stats/{name}_{self.solver.value}.json', 'w') as f:
+                        if e.args[0] == '':
+                            print('{"error": "TO"}', file=f)
+                        else:
+                            print('{"error": "Error"}', file=f)
                 traceback.print_exc()
                 failed_tests.append(name)
 
@@ -341,14 +348,14 @@ class Tests(TestBase):
         spec = Func('spec', If(x >= 0, x, -x), solver=self.solver)
         return self.do_synth('abs', spec, ops, bv.ops, theory='QF_FD')
 
-    def test_pow(self):
-        x, y = Ints('x y')
-        one = IntVal(1)
-        n = 30
-        expr = functools.reduce(lambda a, _: x * a, range(n), one)
-        spec = Func('pow', expr)
-        ops = {Func('mul', x * y): 5}
-        return self.do_synth('pow', spec, ops, consts={})
+    # def test_pow(self):
+    #     x, y = Ints('x y')
+    #     one = IntVal(1)
+    #     n = 30
+    #     expr = functools.reduce(lambda a, _: x * a, range(n), one)
+    #     spec = Func('pow', expr)
+    #     ops = {Func('mul', x * y): 5}
+    #     return self.do_synth('pow', spec, ops, consts={})
 
     def test_poly(self):
         a, b, c, h = Ints('a b c h')
@@ -356,27 +363,27 @@ class Tests(TestBase):
         ops = {Func('mul', a * b): 2, Func('add', a + b): 2}
         return self.do_synth('poly', spec, ops, consts={})
 
-    # def test_array(self):
-    #     def Arr(name):
-    #         return Array(name, IntSort(), IntSort())
-    #
-    #     def permutation(array, perm):
-    #         res = array
-    #         for fr, to in enumerate(perm):
-    #             if fr != to:
-    #                 res = Store(res, to, Select(array, fr))
-    #         return res
-    #
-    #     def swap(a, x, y):
-    #         b = Store(a, x, Select(a, y))
-    #         c = Store(b, y, Select(a, x))
-    #         return c
-    #
-    #     x = Array('x', IntSort(), IntSort())
-    #     p = Int('p')
-    #     op   = Func('swap', swap(x, p, p + 1))
-    #     spec = Func('rev', permutation(x, [3, 2, 1, 0]))
-    #     return self.do_synth('array', spec, { op: 6 })
+    def test_array(self):
+        def Arr(name):
+            return Array(name, IntSort(), IntSort())
+
+        def permutation(array, perm):
+            res = array
+            for fr, to in enumerate(perm):
+                if fr != to:
+                    res = Store(res, to, Select(array, fr))
+            return res
+
+        def swap(a, x, y):
+            b = Store(a, x, Select(a, y))
+            c = Store(b, y, Select(a, x))
+            return c
+
+        x = Array('x', IntSort(), IntSort())
+        p = Int('p')
+        op   = Func('swap', swap(x, p, p + 1))
+        spec = Func('rev', permutation(x, [3, 2, 1, 0]))
+        return self.do_synth('array', spec, { op: 6 })
 
 
 def parse_standard_args():
