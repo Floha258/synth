@@ -146,7 +146,7 @@ class TestBase:
         else:
             self.solver = SupportedSolvers.CVC
 
-    def do_synth(self, name, spec, ops, all_ops=None, consts=None, desc='', **args):
+    def do_synth(self, name, spec, ops, all_ops=None, consts=None, desc='', test_name=None, **args):
         desc = f' ({desc})' if len(desc) > 0 else ''
         print(f'{name}{desc}: ', end='', flush=True)
         output_prefix = name if self.write else None
@@ -198,7 +198,7 @@ class TestBase:
         total_time = sum(s['time'] for s in stats)
         print(f'{total_time / 1e9:.3f}s')
         if self.write_stats:
-            with open(f'stats/{name}_{self.solver.value}.json', 'w') as f:
+            with open(f'stats/{test_name if test_name is not None else name}_{self.solver.value}.json', 'w') as f:
                 json.dump(stats, f, indent=4)
         if self.write_graph:
             with open(f'{name}.dot', 'w') as f:
@@ -229,7 +229,7 @@ class TestBase:
                 if self.write_stats:
                     name = name.split('test_')[1]
                     with open(f'stats/{name}_{self.solver.value}.json', 'w') as f:
-                        if e.args[0] == '':
+                        if len(e.args) != 0 and e.args[0] == '':
                             print('{"error": "TO"}', file=f)
                         else:
                             print('{"error": "Error"}', file=f)
@@ -249,7 +249,7 @@ class Tests(TestBase):
         spec = Func('rand', create_formula([Bool(f'x{i}') for i in range(n_vars)]))
         return self.do_synth(name, spec, ops, consts={}, theory='QF_FD')
 
-    def test_rand(self, size=40, n_vars=4):
+    def test_rand_formula(self, size=40, n_vars=4):
         ops = [(And, 2), (Or, 2), (Xor, 2), (Not, 1)]
         f = lambda x: create_random_formula(x, size, ops)
         return self.random_test('rand_formula', n_vars, f)
@@ -296,7 +296,7 @@ class Tests(TestBase):
         add = And([co == Or(And(x, y), And(x, ci), And(y, ci)), s == Xor(x, Xor(y, ci))])
         spec = Spec('adder', add, [s, co], [x, y, ci])
         return self.do_synth('add_nor3', spec, {Bl.nor3: 8}, Bl.ops, \
-                             desc='1-bit full adder (nor3)', theory='QF_FD')
+                             desc='1-bit full adder (nor3)', theory='QF_FD', test_name='add_apollo')
 
     def test_identity(self):
         spec = Func('magic', And(Or(Bool('x'))))
@@ -331,7 +331,7 @@ class Tests(TestBase):
         mul2 = Func('addadd', b + b)
         spec = Func('mul2', x * 2, And([x >= 0, x < 128]))
         ops = {int2bv: 1, bv2int: 1, mul2: 1}
-        return self.do_synth('preconditions', spec, ops)
+        return self.do_synth('preconditions', spec, ops, test_name='precond')
 
     def test_constant(self):
         x, y = Ints('x y')

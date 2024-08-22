@@ -4,12 +4,13 @@ import json
 
 csv = {}
 all_tests = list(filter(lambda i: i[0:5] == 'test_', dir(Tests)))
-all_test_names = set()
+all_test_names = []
 for solver in SupportedSolvers:
     csv[solver.value] = {}
     for test in all_tests:
         name = test.split('test_')[1]
-        all_test_names.add(name)
+        if name not in all_test_names:
+            all_test_names.append(name)
         try:
             with open(f'stats/{name}_{solver.value}.json') as statsFile:
                 stats = json.load(statsFile)
