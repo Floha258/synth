@@ -1,9 +1,16 @@
 from smtlib import SupportedSolvers
 from test import Tests
+import sys
+from hackdel import BvBench
 import json
 
+
+suite = Tests
+if len(sys.argv) > 1 and sys.argv[1] == '-h':
+    suite = BvBench
+
 csv = {}
-all_tests = list(filter(lambda i: i[0:5] == 'test_', dir(Tests)))
+all_tests = list(filter(lambda i: i[0:5] == 'test_', dir(suite)))
 all_test_names = []
 for solver in SupportedSolvers:
     csv[solver.value] = {}
@@ -22,7 +29,8 @@ for solver in SupportedSolvers:
         except:
             csv[solver.value][name] = 'DNR'
 
-with open('stats.csv', 'w') as resFile:
+filename = 'stats.csv' if suite == Tests else 'hack_stats.csv'
+with open(filename, 'w') as resFile:
     print('Solver;' + ';'.join(all_test_names), file=resFile)
     for solver in SupportedSolvers:
         d = csv[solver.value]

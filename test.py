@@ -220,6 +220,7 @@ class TestBase:
         tests.sort()
         total_time = 0
         failed_tests = []
+        error_list = {}
         for name in tests:
             try:
                 total_time += getattr(self, name)()
@@ -229,9 +230,10 @@ class TestBase:
                 if self.write_stats:
                     name = name.split('test_')[1]
                     with open(f'stats/{name}_{self.solver.value}.json', 'w') as f:
-                        if len(e.args) != 0 and e.args[0] == '':
+                        if len(e.args) != 0 and (e.args[0] == '' or e.args[0] == 'timeout' or e.args[0] == 'unknown'):
                             print('{"error": "TO"}', file=f)
                         else:
+                            error_list[name] = str(e)
                             print('{"error": "Error"}', file=f)
                 traceback.print_exc()
                 failed_tests.append(name)
@@ -241,6 +243,8 @@ class TestBase:
         print(f'Successfully ran {len(tests) - len(failed_tests)}/{len(tests)} tests')
         if len(failed_tests) > 0:
             print(f'Failed Tests: {failed_tests}')
+            with open(f'errors_{self.solver.value}.json', 'w') as f:
+                json.dump(error_list, f, indent=4)
 
 
 class Tests(TestBase):
@@ -348,14 +352,14 @@ class Tests(TestBase):
         spec = Func('spec', If(x >= 0, x, -x), solver=self.solver)
         return self.do_synth('abs', spec, ops, bv.ops, theory='QF_FD')
 
-    # def test_pow(self):
-    #     x, y = Ints('x y')
-    #     one = IntVal(1)
-    #     n = 30
-    #     expr = functools.reduce(lambda a, _: x * a, range(n), one)
-    #     spec = Func('pow', expr)
-    #     ops = {Func('mul', x * y): 5}
-    #     return self.do_synth('pow', spec, ops, consts={})
+    def test_pow(self):
+        x, y = Ints('x y')
+        one = IntVal(1)
+        n = 30
+        expr = functools.reduce(lambda a, _: x * a, range(n), one)
+        spec = Func('pow', expr)
+        ops = {Func('mul', x * y): 5}
+        return self.do_synth('pow', spec, ops, consts={})
 
     def test_poly(self):
         a, b, c, h = Ints('a b c h')

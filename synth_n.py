@@ -144,7 +144,7 @@ class SynthN:
         self.output_prefix = output_prefix
 
         # TODO: Solver or Goal
-        self.synth = Solver(ctx=ctx)
+        self.synth = Goal(ctx=ctx)
         # add well-formedness, well-typedness, and optimization constraints
         self.add_constr_wfp(max_const, const_set)
         self.add_constr_ty()
