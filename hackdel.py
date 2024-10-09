@@ -216,7 +216,7 @@ class BvBench(TestBase):
         o5 = LShR(o4, 2)
         o6 = o5 / o2
         spec = o6 | o3
-        spec = Func('p22', spec)
+        spec = Func('p20', spec)
         ops = {
             self.bv.neg_: 1,
             self.bv.and_: 1,
@@ -243,7 +243,7 @@ class BvBench(TestBase):
         o6 = o3 & o4
         o7 = o5 ^ o6
         spec = o7 ^ c
-        spec = Func('p22', spec)
+        spec = Func('p21', spec)
         ops = {
             Func('neq', neq(a, b)) : 2,
             self.bv.and_: 2,
